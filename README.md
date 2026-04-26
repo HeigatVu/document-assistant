@@ -160,13 +160,13 @@ uv run tools/export_docx.py replacements.json output/final.docx \
 
 ### Secondary: Web Dashboard
 
-```bash
-# Terminal 1 — FastAPI backend
-uv run main.py serve
+Launch both the backend and frontend with a single command:
 
-# Terminal 2 — Next.js frontend
-cd web && npm run dev
+```bash
+uv run main.py start
 ```
+
+*(Alternatively, `uv run main.py dev` also works.)*
 
 - API: `http://localhost:8000`
 - Dashboard: `http://localhost:3000`
