@@ -9,6 +9,7 @@ load_dotenv(REPO_ROOT / ".env")
 
 TOOL_MAP = {
     "ingest":  "tools/ingest.py",
+    "query":   "tools/query.py",
     "refresh": "tools/refresh.py",
     "serve":   "server/app.py",
 }
