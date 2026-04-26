@@ -6,8 +6,6 @@ docs/
 raw/
 wiki/
 .env
-raw/
-wiki/
 processed/
 output/
 tests/

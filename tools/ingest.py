@@ -3,13 +3,15 @@ import sys
 import json
 import re
 from pathlib import Path
+from datetime import datetime
+from markitdown import MarkItDown
 
 # Add project root to sys.path to allow running this script directly
 root = Path(__file__).resolve().parent.parent
 if str(root) not in sys.path:
     sys.path.insert(0, str(root))
 
-from datetime import datetime
+from tools.config import DEFAULT_INGEST_MODEL
 from tools.utils import (
     call_gemini,
     sha256_file,
@@ -68,24 +70,29 @@ def ingest(path: Path | str) -> None:
         if target_path.suffix.lower() in (".pdf", ".docx"):
             files_to_process.append(target_path)
     else:
-        for ext in ("*.pdf", "*.docx"):
-            files_to_process.extend(target_path.rglob(ext))
+        # Use a more robust case-insensitive glob
+        for file_path in target_path.rglob("*"):
+            if file_path.is_file() and file_path.suffix.lower() in (".pdf", ".docx"):
+                files_to_process.append(file_path)
 
     if not files_to_process:
         print(f"No PDF or DOCX files found in {target_path}")
         return
 
     manifest = load_manifest()
-    # Use the flash lite model as requested, or fallback to the env variable
-    ingest_model = os.getenv("INGEST_MODEL", "gemini-3.1-flash-lite-preview")
+    ingest_model = DEFAULT_INGEST_MODEL
 
     print(f"Ingesting {len(files_to_process)} files using {ingest_model}...")
+
+    # Initialize MarkItDown once
+    md = MarkItDown()
 
     for file_path in files_to_process:
         # 2. Hash and check manifest
         file_hash = sha256_file(file_path)
+        resolved_file = file_path.resolve()
         try:
-            rel_path = str(file_path.relative_to(RAW_DIR))
+            rel_path = str(resolved_file.relative_to(RAW_DIR))
         except ValueError:
             rel_path = file_path.name
         
@@ -98,20 +105,34 @@ def ingest(path: Path | str) -> None:
         # Parse filename for metadata
         metadata = parse_filename(file_path.name)
 
-        # 3. Convert to Markdown using Gemini Vision directly
-        prompt_md = "Extract the complete text and structure of this document into Markdown format. Include all headings, lists, tables, and paragraphs exactly as they appear."
+        # 3. Convert to Markdown using MarkItDown locally
+        # This avoids "Unsupported MIME type" errors in Gemini for .docx
+        print(f"    [extracting] {rel_path}...")
+        markdown_content = None
         try:
-            markdown_content = call_gemini(prompt_md, max_tokens=8192, model_override=ingest_model, file_path=file_path)
-            # Remove Markdown block wrappers if present
-            if markdown_content.strip().startswith("```markdown"):
-                markdown_content = re.sub(r"^```markdown\s*", "", markdown_content.strip())
-                markdown_content = re.sub(r"\s*```$", "", markdown_content.strip())
-            markdown_content = markdown_content.strip()
+            result = md.convert(str(file_path))
+            markdown_content = result.text_content
         except Exception as e:
-            print(f"    [error] Gemini Markdown extraction failed on {file_path.name}: {e}")
-            continue
+            print(f"    [error] MarkItDown extraction failed on {file_path.name}: {e}")
 
-        if not markdown_content:
+        # Fallback to Gemini Vision for PDF if MarkItDown fails or returns empty content
+        if not (markdown_content and markdown_content.strip()) and file_path.suffix.lower() == ".pdf":
+            print(f"    [fallback] Attempting Gemini Vision extraction for {file_path.name}...")
+            prompt_md = "This is a scanned document or has no text layer. Please perform OCR and extract the complete text and structure into Markdown format. Include all headings, lists, tables, and paragraphs exactly as they appear."
+            try:
+                markdown_content = call_gemini(prompt_md, max_tokens=8192, model_override=ingest_model, file_path=file_path, use_cli=True)
+                if markdown_content and markdown_content.strip().startswith("```markdown"):
+                    markdown_content = re.sub(r"^```markdown\s*", "", markdown_content.strip())
+                    markdown_content = re.sub(r"\s*```$", "", markdown_content.strip())
+                
+                if markdown_content:
+                    markdown_content = markdown_content.strip()
+            except Exception as ge:
+                print(f"    [error] Gemini fallback failed: {ge}")
+                # Fall through to the final check below
+
+        # Final check: skip if still empty or None
+        if not (markdown_content and markdown_content.strip()):
             print(f"    [error] Extracted markdown was empty for {file_path.name}")
             continue
 
@@ -149,7 +170,7 @@ def ingest(path: Path | str) -> None:
         # 4. Generate Summary via Gemini
         prompt_summary = f"""Analyze this document and return a JSON summary.
         Document Content:
-        {markdown_content[:200000]} 
+        {markdown_content[:50000]} 
 
         Return ONLY a JSON object with these fields:
         {{
@@ -171,6 +192,11 @@ def ingest(path: Path | str) -> None:
             # We can just send the prompt with the markdown text rather than re-uploading the file to save time/tokens.
             response_text = call_gemini(prompt_summary, max_tokens=2048, model_override=ingest_model)
             summary_data = parse_json_from_response(response_text)
+            
+            # Enforce metadata from filename to prevent LLM hallucination/overwrite
+            summary_data["Scope"] = metadata["Scope"]
+            summary_data["Type"] = metadata["Type"]
+            summary_data["Subject"] = metadata["Subject"]
         except Exception as e:
             print(f"    [error] Gemini summarization failed: {e}")
             continue

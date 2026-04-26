@@ -4,12 +4,14 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Union
 
 from tools.task import process_task
 from tools.ingest import ingest
 from tools.utils import RAW_DIR, OUTPUT_DIR, load_manifest, HISTORY_FILE, INDEX_FILE
+from tools.config import DEFAULT_READING_MODEL, DEFAULT_WRITING_MODEL
 import json
+import uuid
 
 app = FastAPI(title="Wiki LLM Document Assistant")
 
@@ -24,14 +26,27 @@ app.add_middleware(
 
 class TaskRequest(BaseModel):
     prompt: str
-    reading_model: str = os.getenv("READING_MODEL", "gemini-3-flash-preview")
-    writing_model: str = os.getenv("WRITING_MODEL", "gemini-3.1-flash-lite-preview")
+    reading_model: str = DEFAULT_READING_MODEL
+    writing_model: str = DEFAULT_WRITING_MODEL
     uploaded_file: Optional[str] = None
-    template_file: Optional[str] = None 
+    template_file: Optional[str] = None
     type_filter: Optional[str] = None
     use_cli: bool = False
 
 class IngestRequest(BaseModel):
+    filename: str
+
+class OpenRequest(BaseModel):
+    filename: str
+
+class OpenOutputRequest(BaseModel):
+    filename: str
+
+class OpenOutputFolderRequest(BaseModel):
+    filename: str
+
+class DeleteTaskRequest(BaseModel):
+    id: Union[int, str]
     filename: str
 
 def load_history() -> list[dict]:
@@ -42,25 +57,50 @@ def load_history() -> list[dict]:
         except (json.JSONDecodeError, IOError):
             return []
     return []
+
 def append_history(entry: dict):
-    """Append a new entry to the history file."""
+    """Append a new entry to the history file, keeping only entries from the last 60 days."""
     history = load_history()
     history.append(entry)
-    HISTORY_FILE.write_text(json.dumps(history, indent=2), encoding="utf-8")
 
-def list_documents() -> list[str]:
+    current_time = time.time()
+    sixty_days_seconds = 60 * 24 * 60 * 60
+
+    filtered_history = []
+    for item in history:
+        item_time = item.get("id")
+        # Handle legacy (seconds), milliseconds (1e12), and nanoseconds (1e18)
+        if isinstance(item_time, (int, float)):
+            if item_time > 1e15: # Nanoseconds
+                actual_time = item_time / 1_000_000_000.0
+            elif item_time > 1e11: # Milliseconds
+                actual_time = item_time / 1000.0
+            else: # Seconds
+                actual_time = item_time
+            if current_time - actual_time > sixty_days_seconds:
+                continue
+        filtered_history.append(item)
+
+    HISTORY_FILE.write_text(json.dumps(filtered_history, indent=2), encoding="utf-8")
+def list_documents() -> list[dict]:
     """List documents in RAW_DIR."""
     if not RAW_DIR.exists():
         return []
     
     manifest = load_manifest()
     docs = []
-    for ext in ("*.pdf", "*.docx"):
-        for path in RAW_DIR.rglob(ext):
+    # Case-insensitive scan
+    for path in RAW_DIR.rglob("*"):
+        if path.is_file() and path.suffix.lower() in (".pdf", ".docx"):
             try:
-                rel_path = str(path.relative_to(RAW_DIR))
-                # Check status
-                status = "ingested" if rel_path in manifest else "pending"
+                # Use absolute resolution to match ingest script logic
+                resolved_path = path.resolve()
+                rel_path = str(resolved_path.relative_to(RAW_DIR))
+                
+                # Check status: check relative path first, then filename fallback for legacy entries
+                is_ingested = rel_path in manifest or path.name in manifest
+                status = "ingested" if is_ingested else "pending"
+                
                 docs.append({"name": rel_path, "status": status})
             except ValueError:
                 docs.append({"name": path.name, "status": "pending"})
@@ -88,6 +128,106 @@ def get_status():
 @app.get("/api/documents")
 def get_documents():
     return {"documents": list_documents()}
+
+@app.post("/api/open_dir")
+def post_open_dir():
+    try:
+        import subprocess
+        import sys
+        if sys.platform == "win32":
+            os.startfile(RAW_DIR)
+        elif sys.platform == "darwin":
+            subprocess.call(["open", str(RAW_DIR)])
+        else:
+            subprocess.call(["xdg-open", str(RAW_DIR)])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/open")
+def post_open(req: OpenRequest):
+    requested_path = (RAW_DIR / req.filename).resolve()
+    if RAW_DIR.resolve() not in requested_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    
+    if not requested_path.exists():
+        raise HTTPException(status_code=400, detail="File not found")
+        
+    try:
+        import subprocess
+        import sys
+        if sys.platform == "win32":
+            os.startfile(requested_path)
+        elif sys.platform == "darwin":
+            subprocess.call(["open", str(requested_path)])
+        else:
+            subprocess.call(["xdg-open", str(requested_path)])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/open_output")
+def post_open_output(req: OpenOutputRequest):
+    requested_path = (OUTPUT_DIR / req.filename).resolve()
+    if OUTPUT_DIR.resolve() not in requested_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    
+    if not requested_path.exists():
+        raise HTTPException(status_code=400, detail="File not found")
+        
+    try:
+        import subprocess
+        import sys
+        if sys.platform == "win32":
+            os.startfile(requested_path)
+        elif sys.platform == "darwin":
+            subprocess.call(["open", str(requested_path)])
+        else:
+            subprocess.call(["xdg-open", str(requested_path)])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/open_output_folder")
+def post_open_output_folder(req: OpenOutputFolderRequest):
+    requested_path = (OUTPUT_DIR / req.filename).resolve()
+    if OUTPUT_DIR.resolve() not in requested_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    
+    # Open the parent directory
+    folder_path = requested_path.parent
+    if not folder_path.exists():
+        raise HTTPException(status_code=400, detail="Folder not found")
+        
+    try:
+        import subprocess
+        import sys
+        if sys.platform == "win32":
+            os.startfile(folder_path)
+        elif sys.platform == "darwin":
+            subprocess.call(["open", str(folder_path)])
+        else:
+            subprocess.call(["xdg-open", str(folder_path)])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/delete_task")
+def post_delete_task(req: DeleteTaskRequest):
+    # 1. Delete history entry
+    history = load_history()
+    new_history = [h for h in history if h.get("id") != req.id]
+    HISTORY_FILE.write_text(json.dumps(new_history, indent=2), encoding="utf-8")
+    
+    # 2. Delete file if it exists
+    try:
+        file_path = (OUTPUT_DIR / req.filename).resolve()
+        if OUTPUT_DIR.resolve() in file_path.parents and file_path.exists():
+            file_path.unlink()
+    except Exception:
+        pass # Ignore file deletion errors if file is already gone
+        
+    return {"success": True}
 
 @app.post("/api/task")
 def post_task(req: TaskRequest):
@@ -123,7 +263,7 @@ def post_task(req: TaskRequest):
         )
         
         history_entry = {
-            "id": int(time.time()),
+            "id": time.time_ns(),
             "prompt": req.prompt,
             "summary": result.summary,
             "output_file": str(result.output_path.name),
@@ -158,15 +298,22 @@ def post_ingest(req: IngestRequest):
 async def upload_file(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
-    
-    # Save the file to RAW_DIR
-    file_path = RAW_DIR / file.filename
+
+    # Save the file to RAW_DIR with path traversal protection
+    # We use path.name to strip any directory components
+    from pathlib import Path
+    safe_filename = Path(file.filename).name
+    file_path = (RAW_DIR / safe_filename).resolve()
+
+    # Double check that the resolved path is inside RAW_DIR
+    if RAW_DIR.resolve() not in file_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
     try:
         with open(file_path, "wb") as f:
             f.write(await file.read())
-        return {"filename": file.filename}
+        return {"filename": safe_filename}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

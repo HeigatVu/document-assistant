@@ -4,6 +4,7 @@ import json
 import shutil
 from pathlib import Path
 from datetime import datetime
+from tools.config import DEFAULT_INGEST_MODEL
 from tools.utils import call_gemini, parse_json_from_response, REPO_ROOT
 
 def auto_rename(file_path_str: str):
@@ -45,7 +46,7 @@ Return ONLY a JSON object with these exact keys:
 }}
 """
 
-    model_name = os.getenv("INGEST_MODEL", "gemini-3.1-flash-lite-preview")
+    model_name = DEFAULT_INGEST_MODEL
     
     try:
         response_text = call_gemini(prompt, max_tokens=1024, model_override=model_name, file_path=file_path)

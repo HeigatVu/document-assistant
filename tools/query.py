@@ -7,6 +7,7 @@ root = Path(__file__).resolve().parent.parent
 if str(root) not in sys.path:
     sys.path.insert(0, str(root))
 
+from tools.config import DEFAULT_INGEST_MODEL
 from tools.utils import INDEX_FILE, call_gemini, parse_json_from_response
 
 def fallback_search(query: str, index_data: list, top_k: int, type_filter: str = None) -> list[dict]:
@@ -84,8 +85,7 @@ Example output:
     
     try:
         # Using the fast model for routing
-        import os
-        routing_model = os.getenv("INGEST_MODEL", "gemini-3.1-flash-lite-preview")
+        routing_model = DEFAULT_INGEST_MODEL
         response_text = call_gemini(prompt, max_tokens=1024, model_override=routing_model, use_cli=use_cli)
         results = parse_json_from_response(response_text)
         if isinstance(results, list):

@@ -12,13 +12,21 @@ TOOL_MAP = {
     "query":   "tools/query.py",
     "refresh": "tools/refresh.py",
     "serve":   "server/app.py",
-    "start":   "tools/start.py",
+    "task":    "tools/task.py",
+    "export":  "tools/export_docx.py",
 }
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python main.py <command> [args]")
-        print("Commands:", ", ".join(TOOL_MAP.keys()))
+        print("Wiki LLM Document Assistance")
+        print("\nPrimary Usage (Gemini CLI):")
+        print("  Use the interactive Gemini CLI to search, draft, and manage documents.")
+        print("\nDirect Tool Usage:")
+        print("  uv run main.py serve      - Launch FastAPI backend (Web UI support)")
+        print("  uv run main.py ingest     - Process documents in raw directory")
+        print("  uv run main.py export     - Export JSON to DOCX")
+        print("  uv run main.py query      - Search the document index")
+        print("  uv run main.py refresh    - Rebuild the index")
         sys.exit(1)
 
     command = sys.argv[1]

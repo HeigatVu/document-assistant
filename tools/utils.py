@@ -10,16 +10,16 @@ import re
 
 load_dotenv()
 
-REPO_ROOT = Path(__file__).parent.parent
-RAW_DIR = REPO_ROOT / "raw"
-PROCESSED_DIR = REPO_ROOT / "processed"
-MARKDOWN_DIR = PROCESSED_DIR / "markdown"
-SUMMARIES_DIR = PROCESSED_DIR / "summaries"
-CHUNKS_DIR = PROCESSED_DIR / "chunks"
-INDEX_FILE = PROCESSED_DIR / "index.json"
-OUTPUT_DIR = REPO_ROOT / "output"
-MANIFEST_FILE = PROCESSED_DIR / ".ingest_manifest.json"
-HISTORY_FILE = PROCESSED_DIR / "history.json"
+REPO_ROOT = Path(__file__).parent.parent.resolve()
+RAW_DIR = (REPO_ROOT / "raw").resolve()
+PROCESSED_DIR = (REPO_ROOT / "processed").resolve()
+MARKDOWN_DIR = (PROCESSED_DIR / "markdown").resolve()
+SUMMARIES_DIR = (PROCESSED_DIR / "summaries").resolve()
+CHUNKS_DIR = (PROCESSED_DIR / "chunks").resolve()
+INDEX_FILE = (PROCESSED_DIR / "index.json").resolve()
+OUTPUT_DIR = (REPO_ROOT / "output").resolve()
+MANIFEST_FILE = (PROCESSED_DIR / ".ingest_manifest.json").resolve()
+HISTORY_FILE = (PROCESSED_DIR / "history.json").resolve()
 
 
 def call_gemini_cli(prompt: str, model_override: str | None = None) -> str:
@@ -28,11 +28,13 @@ def call_gemini_cli(prompt: str, model_override: str | None = None) -> str:
     if model_override:
         cmd.extend(["-m", model_override])
     
-    print(f"  [CLI] Running gemini-cli...")
+    print(f"  [CLI] Running gemini-cli with model {model_override or 'default'}...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Gemini CLI failed: {result.stderr}")
     return result.stdout
+
+from tools.config import DEFAULT_LLM_MODEL
 
 def call_gemini(prompt: str, max_tokens: int, model_override: str | None = None, file_path: Path | None = None, use_cli: bool = False) -> str:
     """Call Gemini API with prompt and optional file. Retries on rate limit or server busy. Or use CLI if requested."""
@@ -53,12 +55,13 @@ def call_gemini(prompt: str, max_tokens: int, model_override: str | None = None,
         raise ValueError("Error: GEMINI_API_KEY not set in .env file")
 
     client = genai.Client(api_key=api_key)
-    model_name = model_override or os.getenv("LLM_MODEL")
+    model_name = model_override or DEFAULT_LLM_MODEL
 
     for attempt in range(3):
         uploaded_file = None
         try:
-            time.sleep(4 if attempt == 0 else 65)
+            if attempt > 0:
+                time.sleep(65)
             contents = []
             if file_path:
                 uploaded_file = client.files.upload(file=str(file_path))

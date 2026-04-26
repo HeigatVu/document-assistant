@@ -1,135 +1,192 @@
 # Wiki LLM Document Assistant
 
-Wiki LLM Document Assistant is a full-stack AI-powered application designed to ingest, index, search, and generate or edit DOCX documents using Google's Gemini LLMs. It acts as an intelligent document management and drafting system, ideal for contracts, proposals, and other structured documents.
+An AI-powered document management and drafting system built on a **CLI-first architecture**. The Gemini CLI is the primary interface — it reads the document library directly, reasons over it, and calls Python only for binary file operations (ingestion and DOCX export). A Next.js web dashboard is available as a secondary interface.
 
-## 🚀 Key Features
+## Key Features
 
-*   **Intelligent Ingestion:** Parses raw PDF and DOCX files, extracting complete text and structure into Markdown, semantic chunks, and generating metadata-rich JSON summaries.
-*   **Semantic Retrieval:** Employs Gemini 2.0 Flash Lite to perform "whole-index" smart routing and retrieval, finding the most relevant templates or reference documents based on user queries and category filters.
-*   **Automated Drafting & Editing:** Uses Gemini 1.5 Pro to plan changes and Gemini 1.5 Flash to write structured DOCX files. It can create new documents from scratch or apply targeted edits to existing templates while preserving run-level formatting.
-*   **Modern Web Dashboard:** A sleek, responsive Next.js (React 19) frontend built with TailwindCSS for managing the document library, triggering tasks, and reviewing task history.
-*   **Unified CLI & REST API:** Core operations can be executed via a command-line interface or through the FastAPI REST endpoints.
+- **Explicit Skill Commands** — Three `/wikidoc-*` commands give unambiguous control: ingest, search, and draft without relying on natural language matching.
+- **Zero-Redundancy Search** — `/wikidoc-search` reads `processed/index.json` directly inside the LLM context; no subprocess or extra API call is needed.
+- **Rich DOCX Generation** — `/wikidoc-draft` supports headings, paragraphs, bullet lists, numbered lists, and tables. Can generate new documents or clone-and-fill existing `.docx` templates (preserving headers, footers, and logos).
+- **Intelligent Ingestion** — `/wikidoc-ingest` converts PDF and DOCX files into Markdown, semantic chunks, and metadata-rich JSON summaries stored in a local index.
+- **Naming Convention Enforcement** — All documents follow `YYYYMMDD_[Scope]_[Type]_[Subject]_[vX].[ext]` with validated Scope and Type codes.
+- **Web Dashboard** — A Next.js (React 19) frontend for browsing the library and triggering tasks via the FastAPI backend.
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-*   **Backend:** Python 3.12+, FastAPI, Uvicorn, google-genai, python-docx
-*   **Frontend:** Next.js (React 19), Tailwind CSS v4, Lucide React, Axios
-*   **AI Models:**
-    *   *Gemini 2.0 Flash Lite* (Document parsing, summarization, routing/retrieval)
-    *   *Gemini 1.5 Pro* (Task planning)
-    *   *Gemini 1.5 Flash* (Document generation/writing)
-*   **Package Management:** `uv` (Python), `npm` (Node.js)
+| Layer | Technology |
+|-------|------------|
+| CLI Interface | Gemini CLI + `/wikidoc-*` skills |
+| Backend | Python 3.12+, FastAPI, Uvicorn |
+| Frontend | Next.js (React 19), Tailwind CSS v4 |
+| Document Processing | `python-docx`, `markitdown` |
+| AI | Google Gemini API (`google-genai`) |
+| Package Management | `uv` (Python), `npm` (Node.js) |
 
-## 📂 Project Structure
+## Project Structure
 
-```text
+```
 wiki-llm-document-assistance/
-├── main.py              # CLI entrypoint for all tools
-├── pyproject.toml       # Python dependencies and metadata
-├── server/              # FastAPI application
-│   └── app.py           # REST API endpoints
-├── tools/               # Core business logic and LLM interactions
-│   ├── ingest.py        # File processing and summarization
-│   ├── query.py         # Smart retrieval routing
-│   ├── task.py          # Document generation orchestration
-│   ├── docx_writer.py   # DOCX creation and editing logic
-│   └── utils.py         # Helpers, Gemini API wrapper, hashing
-├── web/                 # Next.js frontend application
-│   ├── package.json
-│   └── src/app/         # React components and pages
-├── raw/                 # (Created dynamically) Uploaded/raw documents
-├── processed/           # (Created dynamically) Ingested markdown, chunks, summaries, and index
-└── output/              # (Created dynamically) Generated DOCX files
+├── .gemini/
+│   └── skills/
+│       ├── wikidoc-draft/      # /wikidoc-draft: search → draft JSON → export DOCX
+│       ├── wikidoc-ingest/     # /wikidoc-ingest: convert file → add to library
+│       └── wikidoc-search/     # /wikidoc-search: filter index.json directly
+├── tools/
+│   ├── ingest.py               # PDF/DOCX → markdown + index entry
+│   ├── export_docx.py          # CLI: JSON → .docx (or template clone-and-fill)
+│   ├── docx_writer.py          # DOCX creation and template-filling logic
+│   ├── query.py                # Semantic search (used by web UI backend)
+│   ├── task.py                 # Document generation orchestration (web UI backend)
+│   ├── rename.py               # AI-assisted file renaming
+│   ├── config.py               # Model name configuration
+│   └── utils.py                # Gemini API wrapper, hashing, file helpers
+├── server/
+│   └── app.py                  # FastAPI REST API (secondary: web UI backend)
+├── web/                        # Next.js frontend (secondary)
+├── processed/
+│   ├── index.json              # Searchable index of all ingested documents
+│   ├── markdown/               # Markdown versions of source documents
+│   ├── summaries/              # Per-document JSON summaries
+│   └── chunks/                 # Text chunks
+├── raw/                        # Source documents and .docx templates
+├── output/                     # Generated documents
+├── GEMINI.md                   # Project context loaded by Gemini CLI each session
+└── main.py                     # CLI dispatcher for Python tools
 ```
 
-## ⚙️ Core Processes
-
-### 1. Document Ingestion (`tools/ingest.py`)
-1.  **Scanning:** Reads PDF/DOCX files from the `raw/` directory.
-2.  **Extraction:** Sends files to Gemini Vision to extract pristine Markdown, preserving headings and tables.
-3.  **Chunking:** Splits the Markdown into semantic chunks for localized context.
-4.  **Summarization:** Analyzes the full document text (up to 200k characters) to generate a structured JSON summary (metadata, hash, keywords, etc.).
-5.  **Indexing:** Compiles all summaries into a central `index.json` for fast retrieval.
-
-### 2. Smart Querying (`tools/query.py`)
-1.  **Routing:** Sends the user's prompt and a minimized catalog of available documents to Gemini.
-2.  **Scoring:** The LLM returns the top-K relevant documents with a match score and reasoning.
-3.  **Fallback:** If the LLM fails, falls back to a weighted keyword matching algorithm.
-
-### 3. Task Execution (`tools/task.py` & `tools/docx_writer.py`)
-1.  **Context Gathering:** Retrieves relevant documents using the query module.
-2.  **Planning:** Uses Gemini 1.5 Pro to formulate an execution plan based on the user prompt, retrieved context, and any specified style templates.
-3.  **Writing:** Uses Gemini 1.5 Flash to execute the plan, outputting structured JSON with text replacements or raw content.
-4.  **Document Assembly:** `docx_writer.py` either creates a new document or surgically replaces text in an existing template, preserving run-level formatting where possible.
-
-## 💻 Setup & Installation
+## Setup
 
 ### Prerequisites
-*   Python 3.12 or higher
-*   Node.js 20 or higher
-*   [uv](https://docs.astral.sh/uv/) (Python package installer)
-*   A valid [Google Gemini API Key](https://aistudio.google.com/app/apikey)
 
-### 1. Backend Setup
+- Python 3.12+
+- Node.js 20+ (only for the web dashboard)
+- [uv](https://docs.astral.sh/uv/)
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`npm install -g @google/gemini-cli`)
+- A [Google Gemini API Key](https://aistudio.google.com/app/apikey)
+
+### Installation
 
 ```bash
-# Clone the repository
 git clone <repository-url>
 cd wiki-llm-document-assistance
 
-# Set up environment variables
+# Configure environment
 cp .env.example .env
-# Open .env and insert your actual API key:
-# GEMINI_API_KEY="your_api_key_here"
+# Edit .env and set your GEMINI_API_KEY
 
-# Install Python dependencies using uv
+# Install Python dependencies
 uv sync
+
+# Install frontend dependencies (optional — only needed for the web dashboard)
+cd web && npm install
 ```
 
-### 2. Frontend Setup
+## Usage
+
+### Primary: Gemini CLI
+
+Run `gemini` from the project root. `GEMINI.md` and the three skills load automatically.
 
 ```bash
-cd web
-npm install
+gemini
 ```
 
-## 🚀 Running the Application
+#### `/wikidoc-ingest` — Add a document to the library
 
-To use the web dashboard, you need to run both the FastAPI backend and the Next.js frontend concurrently.
+```
+/wikidoc-ingest raw/new_guideline.pdf
+/wikidoc-ingest raw/01_Templates/Admin_Support/
+```
 
-### 1. Start the Backend Server
+Converts the file to Markdown, extracts metadata, generates a summary, and updates `processed/index.json`.
 
-Open a terminal in the root directory and run:
+#### `/wikidoc-search` — Find documents
+
+```
+/wikidoc-search ethics consent forms BV175
+/wikidoc-search Type:GDL VinIF
+```
+
+Reads `processed/index.json` directly inside the LLM context and returns ranked matches with summaries. No subprocess spawned.
+
+#### `/wikidoc-draft` — Create a document
+
+```
+/wikidoc-draft a research participation consent form for the Alzheimer study
+/wikidoc-draft an employment contract for John Doe at IU
+```
+
+The CLI searches the index for relevant templates, generates a structured JSON draft, and exports it to a `.docx` file in `output/`.
+
+### JSON Schema for DOCX Export
+
+**New document:**
+```json
+{
+  "title": "Document Title",
+  "sections": [
+    {"type": "heading", "level": 1, "text": "Section Heading"},
+    {"type": "paragraph", "text": "Body text."},
+    {"type": "bullet_list", "items": ["Item 1", "Item 2"]},
+    {"type": "numbered_list", "items": ["Step 1", "Step 2"]},
+    {"type": "table", "headers": ["Column A", "Column B"], "rows": [["val1", "val2"]]}
+  ]
+}
+```
+
+**Template fill** (clones template, replaces literal placeholder text):
+```json
+{
+  "replacements": [
+    {"old": "Literal placeholder in template", "new": "Replacement value"},
+    {"old": "MBEIU24013", "new": "MBEIU25001"}
+  ]
+}
+```
+
+### Python Tools (Direct CLI)
+
 ```bash
-python main.py serve
+# Ingest a file
+uv run tools/ingest.py raw/path/to/document.pdf
+
+# Export JSON to DOCX
+uv run tools/export_docx.py output/draft.json output/final.docx
+
+# Clone a template and fill placeholders
+uv run tools/export_docx.py replacements.json output/final.docx \
+  --template raw/01_Templates/path/to/Template.docx
 ```
-*The API will be available at `http://localhost:8000`*
 
-### 2. Start the Frontend Server
-
-Open a new terminal in the `web/` directory and run:
-```bash
-npm run dev
-```
-*The Dashboard will be available at `http://localhost:3000`*
-
-## ⌨️ CLI Usage
-
-You can bypass the web UI and use the unified CLI script `main.py` to trigger operations directly.
+### Secondary: Web Dashboard
 
 ```bash
-# Ingest all files from the raw directory
-python main.py ingest ./raw
+# Terminal 1 — FastAPI backend
+uv run main.py serve
 
-# Query the index for a specific topic
-python main.py query "confidentiality agreement"
-
-# Start a document generation task
-python main.py start "Write a new employment contract for John Doe"
+# Terminal 2 — Next.js frontend
+cd web && npm run dev
 ```
 
-## 🔮 Future Improvements
+- API: `http://localhost:8000`
+- Dashboard: `http://localhost:3000`
 
-*   **Vector Database Integration:** Migrate from in-memory JSON matching to a scalable Vector DB (e.g., ChromaDB, Qdrant) for improved semantic search over thousands of documents.
-*   **Streaming Responses:** Implement WebSockets or Server-Sent Events (SSE) to stream LLM generation progress to the frontend UI.
-*   **Advanced Formatting Preservation:** Improve the `docx_writer` to handle complex multi-run formatting bridging, tables, and nested lists more elegantly during text replacement.
+## Document Naming Convention
+
+```
+YYYYMMDD_[Scope]_[Type]_[Subject]_[vX].[ext]
+```
+
+**Valid Scope:** `BK`, `IU`, `ND2`, `BV175`, `VinIF`, `Terumo`, `SVI`, `Common`
+
+**Valid Type:**
+
+| Code | Meaning | Code | Meaning |
+|------|---------|------|---------|
+| `GDL` | Guideline / Regulation | `REP` | Report |
+| `PRO` | Proposal | `SCH` | Schedule |
+| `CON` | Contract / Agreement | `PRE` | Presentation |
+| `ETH` | Ethics / IRB form | `CRF` | Case Report Form |
+| `BUD` | Budget | `FIG` | Figure / Diagram |
+| `REQ` | Request / Application | `COR` | Correspondence |
+| `ADM` | Administrative | `CV` | Curriculum Vitae |
