@@ -19,59 +19,6 @@ OUTPUT_DIR = REPO_ROOT / "output"
 MANIFEST_FILE = PROCESSED_DIR / ".ingest_manifest.json"
 
 
-def _call_ollama(prompt: str, max_tokens: int) -> str:
-    model = os.getenv("OLLAMA_MODEL", "llama3.2")
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"num_predict": max_tokens}
-            },
-            timeout=120
-        )
-        response.raise_for_status()
-        return response.json()["response"]
-    except requests.exceptions.ConnectionError:
-        print("Error: Ollama is not running. Start it with: ollama serve")
-        sys.exit(1)
-
-def call_gemini_cli(prompt: str, max_tokens: int = 0) -> str:
-    """Call the local gemini CLI binary in headless mode."""
-    import subprocess
-    import re
-    try:
-        result = subprocess.run(
-            ["gemini", "-p", prompt, "--include-directories", "30_wiki,20_raw"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        stdout = result.stdout.strip()
-        
-        # Filter out agent status/thought lines
-        lines = stdout.splitlines()
-        clean_lines = []
-        for line in lines:
-            # Skip lines that look like agent "thoughts", status messages, or interactive prompts
-            l = line.strip()
-            if not l:
-                clean_lines.append(line)
-                continue
-            if re.match(r"^(I will|I'll|Error executing tool|YOLO mode is enabled|Processing|Reading|Checking|Searching|Would you like me to|Please let me know|Let me know if|Exit code)", l, re.IGNORECASE):
-                continue
-            clean_lines.append(line)
-        
-        return "\n".join(clean_lines).strip()
-    except subprocess.CalledProcessError as e:
-        print(f"Error running gemini CLI: {e.stderr}")
-        return f"Error: {e.stderr}"
-    except FileNotFoundError:
-        print("Error: gemini CLI not found in PATH")
-        sys.exit(1)
-
 def _call_gemini(prompt: str, max_tokens: int, model_override: str | None = None) -> str:
     """Call Gemini API with prompt. Retries on rate limit or server busy."""
     try:
