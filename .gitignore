@@ -10,5 +10,4 @@ raw/
 wiki/
 processed/
 output/
-tests/
-log/
+tests/log/
