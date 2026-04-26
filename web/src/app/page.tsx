@@ -2,18 +2,13 @@
 
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload, Clock } from "lucide-react";
-
-const TEMPLATES = [
-  { label: "Summarize", prompt: "Please provide a concise summary of the key points in these documents." },
-  { label: "Draft Report", prompt: "Generate a professional report structure based on the available documents, including an executive summary and recommendations." },
-  { label: "Action Items", prompt: "Extract all action items, owners, and deadlines mentioned in the documents." },
-];
+import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload, Clock, X } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export default function Dashboard() {
   const [documents, setDocuments] = useState<{name: string, status: string}[]>([]);
+  const [types, setTypes] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -22,13 +17,25 @@ export default function Dashboard() {
   const [readingModel, setReadingModel] = useState("gemini-1.5-pro");
   const [writingModel, setWritingModel] = useState("gemini-1.5-flash");
   const [templateFile, setTemplateFile] = useState("");
+  const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [useCli, setUseCli] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [history, setHistory] = useState<any[]>([]);
 
   useEffect(() => {
     fetchDocuments();
     fetchHistory();
+    fetchTypes();
   }, []);
+
+  const fetchTypes = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/types`);
+      setTypes(res.data.types);
+    } catch (err) {
+      console.error("Failed to fetch types", err);
+    }
+  };
 
   const fetchHistory = async () => {
     try {
@@ -38,11 +45,13 @@ export default function Dashboard() {
       console.error("Failed to fetch history", err);
     }
   };
+  
   const ingestDocument = async (filename: string) => {
     setIngesting(filename);
     try {
       await axios.post(`${API_BASE}/ingest`, { filename });
       await fetchDocuments();
+      await fetchTypes();
     } catch (err: any) {
       setError(err.response?.data?.detail || "Ingestion failed");
     } finally {
@@ -64,6 +73,7 @@ export default function Dashboard() {
       await axios.post(`${API_BASE}/ingest`, { filename });
       setTemplateFile(filename);
       await fetchDocuments();
+      await fetchTypes();
     } catch (err: any) {
       setError(err.response?.data?.detail || "Upload failed");
     } finally {
@@ -94,6 +104,8 @@ export default function Dashboard() {
         reading_model: readingModel,
         writing_model: writingModel,
         template_file: templateFile || null,
+        type_filter: selectedType || null,
+        use_cli: useCli,
       });
       setResult(res.data);
       fetchDocuments(); // refresh list
@@ -131,7 +143,6 @@ export default function Dashboard() {
         </header>
 
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-8 min-h-0">
-          {/* Sidebar: Documents */}
           {/* Sidebar: Documents */}
           <section className="flex flex-col gap-4 bg-slate-900/50 backdrop-blur-xl rounded-3xl border border-slate-800 p-6 shadow-2xl overflow-hidden">
             <h2 className="text-lg font-semibold flex items-center gap-2 text-slate-300">
@@ -183,7 +194,7 @@ export default function Dashboard() {
             <div className="flex-1 bg-slate-900/50 backdrop-blur-xl rounded-3xl border border-slate-800 p-6 shadow-2xl overflow-y-auto flex flex-col">
               
               {/* History List */}
-              {history.length > 0 && (
+              {history.length > 0 && !result && selectedType === null && (
                 <div className="space-y-3 mb-6 pb-6 border-b border-slate-800/50">
                   <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2">
                     <Clock className="w-3 h-3" />
@@ -230,19 +241,62 @@ export default function Dashboard() {
                       <p className="text-sm truncate text-slate-300">{result.referenced_files?.join(", ") || "None"}</p>
                     </div>
                   </div>
+                  <button onClick={() => setResult(null)} className="mt-4 text-xs font-medium text-indigo-400 hover:text-indigo-300">
+                    &larr; Start New Task
+                  </button>
                 </div>
               )}
               
               {!result && !error && !loading && (
-                <div className="text-center p-8 m-auto max-w-sm">
-                  <div className="w-16 h-16 mx-auto bg-slate-800/50 rounded-2xl flex items-center justify-center mb-4 border border-slate-800 shadow-inner">
-                    <Sparkles className="w-8 h-8 text-slate-500" />
-                  </div>
-                  <h3 className="text-lg font-medium text-slate-300 mb-2">How can I help?</h3>
-                  <p className="text-sm text-slate-500">Ask me to synthesize, create a new report, or edit an existing document based on the knowledge I have.</p>
+                <div className="flex-1 flex flex-col items-center justify-center p-4 min-h-[300px]">
+                  {selectedType ? (
+                    <div className="text-center animate-in fade-in zoom-in-95 duration-300">
+                      <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-300 px-5 py-2.5 rounded-full border border-indigo-500/30 mb-6 shadow-[0_0_20px_rgba(99,102,241,0.1)]">
+                        <span className="text-sm font-semibold tracking-wide">Searching in: {selectedType}</span>
+                        <button 
+                          onClick={() => setSelectedType(null)} 
+                          className="hover:text-white transition-colors bg-indigo-500/20 hover:bg-indigo-500/40 p-1 rounded-full"
+                          title="Clear filter"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <h3 className="text-2xl font-medium text-slate-200 mb-2">What kind of {selectedType} do you need?</h3>
+                      <p className="text-sm text-slate-500">I will only search within this category to find the best template.</p>
+                    </div>
+                  ) : (
+                    <div className="w-full max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="text-center mb-8">
+                        <h3 className="text-2xl font-medium text-slate-200">Select a Document Category</h3>
+                        <p className="text-sm text-slate-500 mt-2">Filter to a specific type, or just search globally below.</p>
+                      </div>
+                      {types.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                          {types.map((t) => (
+                            <button
+                              key={t}
+                              onClick={() => setSelectedType(t)}
+                              className="p-6 rounded-2xl bg-slate-800/40 hover:bg-indigo-500/10 border border-slate-800 hover:border-indigo-500/40 transition-all flex flex-col items-center gap-3 group shadow-lg hover:shadow-indigo-500/10"
+                            >
+                              <div className="p-3 bg-slate-900 rounded-xl group-hover:bg-indigo-500/20 transition-colors shadow-inner">
+                                <FileText className="w-6 h-6 text-slate-400 group-hover:text-indigo-400" />
+                              </div>
+                              <span className="font-bold text-slate-300 group-hover:text-indigo-200 tracking-wide">{t}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-8 border border-dashed border-slate-800 rounded-3xl text-center">
+                          <p className="text-slate-500 text-sm">No categories found.</p>
+                          <p className="text-slate-600 text-xs mt-1">Ingest some correctly named documents first.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
+
             <div className="flex flex-wrap items-center gap-4 px-2 mb-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
               <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
                 <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Reader</span>
@@ -267,6 +321,7 @@ export default function Dashboard() {
                   <option value="gemini-1.5-pro">Gemini Pro (Smart)</option>
                 </select>
               </div>
+              
               <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
                 <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Style Reference</span>
                 <select 
@@ -290,6 +345,7 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+            
             {/* Input Form */}
             <form onSubmit={submitTask} className="relative group">
               <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-[2rem] blur opacity-20 group-hover:opacity-40 transition duration-500" />
@@ -298,7 +354,7 @@ export default function Dashboard() {
                   type="text"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="e.g. Can you describe about what text do you want to build"
+                  placeholder={selectedType ? `Describe the ${selectedType} you want to create...` : "Search globally or describe what you want to create..."}
                   className="flex-1 bg-transparent border-none focus:outline-none px-4 py-3 text-slate-200 placeholder:text-slate-600 text-[15px]"
                   disabled={loading}
                 />

@@ -20,12 +20,14 @@ def process_task(
     template_file_path: Optional[Path] = None, 
     reading_model: str = "gemini-1.5-pro",
     writing_model: str = "gemini-1.5-flash",
-    save_path: Path = Path("output.docx")
+    save_path: Path = Path("output.docx"),
+    type_filter: Optional[str] = None,
+    use_cli: bool = False
 ) -> TaskResult:
     """Process a user task to create or edit a DOCX document."""
     
     # 1. Search for references
-    search_results = search_index(prompt, top_k=3)
+    search_results = search_index(prompt, top_k=3, type_filter=type_filter, use_cli=use_cli)
     referenced_files = [res.get("file") for res in search_results if "file" in res]
     
     style_guide = ""
@@ -50,7 +52,7 @@ Context:
 
 User Request: {prompt}"""
     
-    plan = call_gemini(plan_prompt, max_tokens=1024, model_override=reading_model)
+    plan = call_gemini(plan_prompt, max_tokens=1024, model_override=reading_model, use_cli=use_cli)
     
     # 3. Write phase (Writing Model)
     write_prompt = f"""Based on this plan, generate the document changes or new document in JSON.
@@ -62,14 +64,23 @@ User Request: {prompt}
 
 Return ONLY JSON. Example: {{"title": "Doc", "content": "..."}}"""
     
-    write_result = call_gemini(write_prompt, max_tokens=4096, model_override=writing_model)
-
-    try:
-        content_json = parse_json_from_response(write_result)
-    except Exception as e:
+    content_json = None
+    last_error = ""
+    current_prompt = write_prompt
+    
+    for attempt in range(3):
+        write_result = call_gemini(current_prompt, max_tokens=8192, model_override=writing_model, use_cli=use_cli)
+        try:
+            content_json = parse_json_from_response(write_result)
+            break
+        except Exception as e:
+            last_error = str(e)
+            current_prompt = write_prompt + f"\n\nYOUR PREVIOUS OUTPUT WAS INVALID JSON. ERROR: {last_error}\n\nFIX YOUR OUTPUT AND RETURN ONLY VALID JSON:\n{write_result}"
+            
+    if content_json is None:
         return TaskResult(
             output_path=save_path,
-            summary=f"Failed to generate valid document content: {str(e)}",
+            summary=f"Failed to generate valid document content after 3 attempts. Last error: {last_error}",
             referenced_files=referenced_files,
             success=False
         )

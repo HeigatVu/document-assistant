@@ -1,5 +1,11 @@
 import sys
 from pathlib import Path
+
+# Add project root to sys.path to allow running this script directly
+root = Path(__file__).resolve().parent.parent
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
 from tools.utils import RAW_DIR, sha256_file, load_manifest
 from tools.ingest import ingest
 

@@ -3,6 +3,7 @@ import sys
 import time
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
 import re
@@ -21,35 +22,67 @@ MANIFEST_FILE = PROCESSED_DIR / ".ingest_manifest.json"
 HISTORY_FILE = PROCESSED_DIR / "history.json"
 
 
-def call_gemini(prompt: str, max_tokens: int, model_override: str | None = None) -> str:
-    """Call Gemini API with prompt. Retries on rate limit or server busy."""
+def call_gemini_cli(prompt: str, model_override: str | None = None) -> str:
+    """Call Gemini CLI via subprocess."""
+    cmd = ["gemini", "-p", prompt, "-y"]
+    if model_override:
+        cmd.extend(["-m", model_override])
+    
+    print(f"  [CLI] Running gemini-cli...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Gemini CLI failed: {result.stderr}")
+    return result.stdout
+
+def call_gemini(prompt: str, max_tokens: int, model_override: str | None = None, file_path: Path | None = None, use_cli: bool = False) -> str:
+    """Call Gemini API with prompt and optional file. Retries on rate limit or server busy. Or use CLI if requested."""
+    if use_cli:
+        if file_path:
+            # We append the file path to the prompt for the CLI to read if needed, though CLI native vision isn't as direct
+            prompt = f"Please read the file at {file_path.absolute()}\n\n" + prompt
+        return call_gemini_cli(prompt, model_override)
+
     try:
         from google import genai
         from google.genai import types
     except ImportError:
-        print("Error: google-genai not installed. Run: uv add google-genai")
-        sys.exit(1)
+        raise RuntimeError("Error: google-genai not installed. Run: uv add google-genai")
         
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("Error: GEMINI_API_KEY not set in .env file")
-        sys.exit(1)
+        raise ValueError("Error: GEMINI_API_KEY not set in .env file")
 
     client = genai.Client(api_key=api_key)
     model_name = model_override or os.getenv("LLM_MODEL")
 
     for attempt in range(3):
+        uploaded_file = None
         try:
             time.sleep(4 if attempt == 0 else 65)
+            contents = []
+            if file_path:
+                uploaded_file = client.files.upload(file=str(file_path))
+                contents.append(uploaded_file)
+            contents.append(prompt)
+
             response = client.models.generate_content(
                 model=model_name,
-                contents=prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     max_output_tokens=max_tokens,
                 ),
             )
+            
+            if uploaded_file:
+                client.files.delete(name=uploaded_file.name)
+                
             return response.text
         except Exception as e:
+            if uploaded_file:
+                try:
+                    client.files.delete(name=uploaded_file.name)
+                except Exception:
+                    pass
             err = str(e)
             if ("429" in err or "503" in err) and attempt < 2:
                 wait = 65 if "429" in err else 30

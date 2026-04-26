@@ -7,7 +7,7 @@ from typing import Optional
 
 from tools.task import process_task
 from tools.ingest import ingest
-from tools.utils import RAW_DIR, OUTPUT_DIR, load_manifest, HISTORY_FILE
+from tools.utils import RAW_DIR, OUTPUT_DIR, load_manifest, HISTORY_FILE, INDEX_FILE
 import json
 
 app = FastAPI(title="Wiki LLM Document Assistant")
@@ -27,6 +27,8 @@ class TaskRequest(BaseModel):
     writing_model: str = "gemini-1.5-flash"
     uploaded_file: Optional[str] = None
     template_file: Optional[str] = None 
+    type_filter: Optional[str] = None
+    use_cli: bool = False
 
 class IngestRequest(BaseModel):
     filename: str
@@ -62,6 +64,17 @@ def list_documents() -> list[str]:
             except ValueError:
                 docs.append({"name": path.name, "status": "pending"})
     return docs
+
+@app.get("/api/types")
+def get_types():
+    if not INDEX_FILE.exists():
+        return {"types": []}
+    try:
+        data = json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+        types = sorted(list(set(d.get("Type") for d in data if d.get("Type") and d.get("Type") != "Unknown")))
+        return {"types": types}
+    except Exception:
+        return {"types": []}
 
 @app.get("/api/history")
 def get_history():
@@ -103,7 +116,9 @@ def post_task(req: TaskRequest):
             template_file_path=template_file_path, 
             reading_model=req.reading_model,
             writing_model=req.writing_model,
-            save_path=output_path
+            save_path=output_path,
+            type_filter=req.type_filter,
+            use_cli=req.use_cli
         )
         
         history_entry = {
