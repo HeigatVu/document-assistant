@@ -1,11 +1,10 @@
-import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from tools.utils import _call_gemini
+from tools.utils import call_gemini, parse_json_from_response
 from tools.query import search_index
+from tools.docx_writer import edit_docx, create_docx
 
 @dataclass
 class TaskResult:
@@ -14,7 +13,7 @@ class TaskResult:
     referenced_files: list[str]
     success: bool
 
-from tools.docx_writer import edit_docx, create_docx
+
 def process_task(
     prompt: str,
     uploaded_file_path: Optional[Path],
@@ -41,7 +40,7 @@ Context:
 
 User Request: {prompt}"""
     
-    plan = _call_gemini(plan_prompt, max_tokens=1024, model_override=reading_model)
+    plan = call_gemini(plan_prompt, max_tokens=1024, model_override=reading_model)
     
     # 3. Write phase (Writing Model)
     write_prompt = f"""Based on this plan, generate the document changes or new document in JSON.
@@ -52,18 +51,17 @@ User Request: {prompt}
 
 Return ONLY JSON. Example: {{"title": "Doc", "content": "..."}}"""
     
-    write_result = _call_gemini(write_prompt, max_tokens=4096, model_override=writing_model)
-    
-    # Simple JSON extraction
-    content_json = {}
-    try:
-        json_str = write_result.strip()
-        json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
-        json_str = re.sub(r"\s*```$", "", json_str)
-        content_json = json.loads(json_str)
-    except Exception:
-        pass
+    write_result = call_gemini(write_prompt, max_tokens=4096, model_override=writing_model)
 
+    try:
+        content_json = parse_json_from_response(write_result)
+    except Exception as e:
+        return TaskResult(
+            output_path=save_path,
+            summary=f"Failed to generate valid document content: {str(e)}",
+            referenced_files=referenced_files,
+            success=False
+        )
     # 4. Delegate to writer
     if uploaded_file_path:
         edit_docx(uploaded_file_path, content_json, save_path)

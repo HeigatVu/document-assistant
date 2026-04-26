@@ -1,32 +1,22 @@
 import os
 import sys
 import json
-import re
 from pathlib import Path
 from datetime import datetime
 from markitdown import MarkItDown
 from tools.utils import (
-    _call_gemini,
+    call_gemini,
     sha256_file,
-    read_file,
     write_file,
     load_manifest,
     save_manifest,
+    parse_json_from_response,
     RAW_DIR,
     PROCESSED_DIR,
     MARKDOWN_DIR,
     SUMMARIES_DIR,
     INDEX_FILE,
 )
-
-def parse_json_from_response(text: str) -> dict:
-    """Parse JSON from LLM response, handling markdown fences."""
-    text = re.sub(r"^```(?:json)?\s*", "", text.strip())
-    text = re.sub(r"\s*```$", "", text.strip())
-    match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
-        raise ValueError("No JSON object found in response")
-    return json.loads(match.group())
 
 def rebuild_index() -> None:
     """Rebuild processed/index.json from all individual summary files."""
@@ -115,7 +105,7 @@ def ingest(path: Path | str) -> None:
         """
         
         try:
-            response_text = _call_gemini(prompt, max_tokens=2048, model_override=ingest_model)
+            response_text = call_gemini(prompt, max_tokens=2048, model_override=ingest_model)
             summary_data = parse_json_from_response(response_text)
         except Exception as e:
             print(f"    [error] Gemini summarization failed: {e}")

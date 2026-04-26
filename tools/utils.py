@@ -1,11 +1,11 @@
 import os
-import requests
 import sys
 import time
 import hashlib
 import json
 from pathlib import Path
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
@@ -19,7 +19,7 @@ OUTPUT_DIR = REPO_ROOT / "output"
 MANIFEST_FILE = PROCESSED_DIR / ".ingest_manifest.json"
 
 
-def _call_gemini(prompt: str, max_tokens: int, model_override: str | None = None) -> str:
+def call_gemini(prompt: str, max_tokens: int, model_override: str | None = None) -> str:
     """Call Gemini API with prompt. Retries on rate limit or server busy."""
     try:
         from google import genai
@@ -91,3 +91,12 @@ def write_file(path: Path, content: str) -> None:
     """Write file content safely."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+def parse_json_from_response(text: str) -> dict:
+    """Parse JSON from LLM response, handling markdown fences."""
+    text = re.sub(r"^```(?:json)?\s*", "", text.strip())
+    text = re.sub(r"\s*```$", "", text.strip())
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        raise ValueError("No JSON object found in response")
+    return json.loads(match.group())

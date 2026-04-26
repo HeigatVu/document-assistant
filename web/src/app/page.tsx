@@ -4,18 +4,31 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import { FileText, Send, Loader2, CheckCircle2, Sparkles } from "lucide-react";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export default function Dashboard() {
-  const [documents, setDocuments] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<{name: string, status: string}[]>([]);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState("");
+  const [ingesting, setIngesting] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDocuments();
   }, []);
+
+    const ingestDocument = async (filename: string) => {
+    setIngesting(filename);
+    try {
+      await axios.post(`${API_BASE}/ingest`, { filename });
+      await fetchDocuments();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Ingestion failed");
+    } finally {
+      setIngesting(null);
+    }
+  };
 
   const fetchDocuments = async () => {
     try {
@@ -69,10 +82,11 @@ export default function Dashboard() {
 
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-8 min-h-0">
           {/* Sidebar: Documents */}
+          {/* Sidebar: Documents */}
           <section className="flex flex-col gap-4 bg-slate-900/50 backdrop-blur-xl rounded-3xl border border-slate-800 p-6 shadow-2xl overflow-hidden">
             <h2 className="text-lg font-semibold flex items-center gap-2 text-slate-300">
               <FileText className="w-5 h-5 text-purple-400" />
-              Ingested Documents
+              Document Library
             </h2>
             <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
               {documents.length === 0 ? (
@@ -81,13 +95,37 @@ export default function Dashboard() {
                 </p>
               ) : (
                 documents.map((doc, i) => (
-                  <div key={i} className="group p-3 rounded-xl bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/30 transition-all cursor-default">
-                    <p className="text-sm font-medium truncate">{doc}</p>
+                  <div key={i} className="group p-3 rounded-xl bg-slate-800/40 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/30 transition-all flex items-center justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate text-slate-200">{doc.name}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${doc.status === 'ingested' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                        <span className={`text-[10px] uppercase tracking-widest font-bold ${doc.status === 'ingested' ? 'text-emerald-400/80' : 'text-amber-400/80'}`}>
+                          {doc.status}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {doc.status === 'pending' && (
+                      <button 
+                        onClick={() => ingestDocument(doc.name)}
+                        disabled={ingesting === doc.name}
+                        title="Ingest document"
+                        className="p-2 bg-indigo-500/10 hover:bg-indigo-500/30 text-indigo-400 rounded-xl transition-all border border-indigo-500/20 hover:border-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {ingesting === doc.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-4 h-4" />
+                        )}
+                      </button>
+                    )}
                   </div>
                 ))
               )}
             </div>
           </section>
+
 
           {/* Main Task Area */}
           <section className="lg:col-span-2 flex flex-col gap-4">
@@ -127,7 +165,7 @@ export default function Dashboard() {
                     <Sparkles className="w-8 h-8 text-slate-500" />
                   </div>
                   <h3 className="text-lg font-medium text-slate-300 mb-2">How can I help?</h3>
-                  <p className="text-sm text-slate-500">Ask me to synthesize documents, draft a new report, or edit an existing file.</p>
+                  <p className="text-sm text-slate-500">Ask me to synthesize, create a new report, or edit an existing document based on the knowledge I have.</p>
                 </div>
               )}
             </div>
@@ -140,7 +178,7 @@ export default function Dashboard() {
                   type="text"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="e.g. Generate a summary of our finance documents..."
+                  placeholder="e.g. Can you describe about what text do you want to build"
                   className="flex-1 bg-transparent border-none focus:outline-none px-4 py-3 text-slate-200 placeholder:text-slate-600 text-[15px]"
                   disabled={loading}
                 />

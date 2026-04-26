@@ -28,6 +28,7 @@ def find_changed_files(force: bool = False) -> list[Path]:
                 changed_files.append(path)
                 
     return changed_files
+    
 if __name__ == "__main__":
     force = "--force" in sys.argv
     dry_run = "--dry-run" in sys.argv
