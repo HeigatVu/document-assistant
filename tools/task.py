@@ -14,13 +14,7 @@ class TaskResult:
     referenced_files: list[str]
     success: bool
 
-# Dummy functions for docx_writer (to be fully implemented in Task 7)
-def edit_docx(source_path: Path, changes_json: dict, output_path: Path) -> None:
-    pass
-
-def create_docx(content_json: dict, output_path: Path) -> None:
-    pass
-
+from tools.docx_writer import edit_docx, create_docx
 def process_task(
     prompt: str,
     uploaded_file_path: Optional[Path],
