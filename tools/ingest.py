@@ -1,23 +1,24 @@
 import os
 import sys
 import json
-import hashlib
 import re
-from pathlib import Path 
-from datetime import date
-
-from utils import _call_gemini, read_file, write_file, extract_wikilinks, append_log, all_wiki_pages, REPO_ROOT, WIKI_DIR, LOG_FILE, INDEX_FILE, OVERVIEW_FILE, SCHEMA_FILE, MANIFEST_FILE, load_manifest
-
-
-def save_manifest(manifest: dict) -> None:
-    """Save the ingest manifest."""
-    MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_FILE.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-
-def sha256(text:str) -> str:
-    """Compute SHA256 hash of text."""
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
-
+from pathlib import Path
+from datetime import datetime
+from markitdown import MarkItDown
+from tools.utils import (
+    _call_gemini,
+    sha256_file,
+    read_file,
+    write_file,
+    load_manifest,
+    save_manifest,
+    RAW_DIR,
+    PROCESSED_DIR,
+    MARKDOWN_DIR,
+    SUMMARIES_DIR,
+    INDEX_FILE,
+)
+from dotenv import load_dotenv
 
 def safe_wiki_path(relative_path: str) -> Path:
     """Resolve a wiki-relative path and ensure it stays inside WIKI_DIR.
@@ -118,16 +119,15 @@ def build_wiki_context(source_content: str) -> str:
 
     return "\n\n---\n\n".join(parts)
 
-def parse_json_from_response(text:str) -> dict:
-    """Parse JSON from LLM response."""
-    # Strip markdown code fences if present
+def parse_json_from_response(text: str) -> dict:
+    """Parse JSON from LLM response, handling markdown fences."""
     text = re.sub(r"^```(?:json)?\s*", "", text.strip())
     text = re.sub(r"\s*```$", "", text.strip())
-    # Find the outermost JSON object
     match = re.search(r"\{[\s\S]*\}", text)
     if not match:
-        raise ValueError("No JSON object founmd in response")
+        raise ValueError("No JSON object found in response")
     return json.loads(match.group())
+
 
 def update_index(new_entry: str, section: str = "Sources"):
     content = read_file(INDEX_FILE)
@@ -296,152 +296,109 @@ def read_source(source: Path) -> str:
         )
     return source.read_text(encoding="utf-8")
 
-def ingest(source_path:str) -> None:
-    """Ingest a source file into the wiki."""
-    source = Path(source_path)
-    if not source.exists():
-        print(f"Error: Source file not found: {source}")
-        sys.exit(1)
-        
-    source_content = read_source(source)
-    source_hash = sha256(source_content)
-    today = date.today().isoformat()
-    print(f"\nIngesting: {source.name}  (hash: {source_hash})")
+def rebuild_index() -> None:
+    """Rebuild processed/index.json from all individual summary files."""
+    index = []
+    if SUMMARIES_DIR.exists():
+        for summary_file in SUMMARIES_DIR.glob("*.json"):
+            try:
+                data = json.loads(summary_file.read_text(encoding="utf-8"))
+                index.append(data)
+            except Exception:
+                continue
     
-    wiki_context = build_wiki_context(source_content)
-    schema = read_file(SCHEMA_FILE)
-    
-    note_type = detect_note_type(source, source_content)
-    prompt = build_ingest_prompt(source_content, source, wiki_context, schema, today, note_type)
-    
-    ingest_model = os.getenv("INGEST_MODEL", os.getenv("LLM_MODEL"))
-    print(f"Calling API (model: {ingest_model})")
-    raw = _call_gemini(prompt, max_tokens=8192, model_override=ingest_model)
-    try:
-        data = parse_json_from_response(raw)
-    except (ValueError, json.JSONDecodeError) as e:
-        print(f"Error: Failed to parse JSON from LLM response: {e}")
-        print("Raw response saved to /tmp/ingest_debug.txt:\n")
-        Path("/tmp/ingest_debug.txt").write_text(raw)
-        sys.exit(1)
-        
-    # Write source page
-    if note_type == "paper":
-        subdir = "papers"
-    elif note_type == "book":
-        subdir = "books"
+    write_file(INDEX_FILE, json.dumps(index, indent=2))
+    print(f"Index rebuilt with {len(index)} entries.")
+
+def ingest(path: Path | str) -> None:
+    """Ingest files from path (file or directory) into the processed library."""
+    target_path = Path(path)
+    if not target_path.exists():
+        print(f"Error: Path not found: {target_path}")
+        return
+
+    # 1. Scan for PDF/DOCX
+    files_to_process = []
+    if target_path.is_file():
+        if target_path.suffix.lower() in (".pdf", ".docx"):
+            files_to_process.append(target_path)
     else:
-        subdir = "notes"
-    write_file(WIKI_DIR / "sources" / subdir / f"{data['slug']}.md", data["source_page"])
+        for ext in ("*.pdf", "*.docx"):
+            files_to_process.extend(target_path.rglob(ext))
 
+    if not files_to_process:
+        print(f"No PDF or DOCX files found in {target_path}")
+        return
 
-    # Write entity pages — validate LLM-provided paths to block traversal.
-    # Only allow paths under entities/ or concepts/ to avoid overwriting
-    # index.md, log.md, or arbitrary files elsewhere in the repo.
-    def _safe_sub_path(raw_path: str, allowed_prefix: str) -> Path | None:
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            return None
-        try:
-            resolved = safe_wiki_path(raw_path)
-        except ValueError as exc:
-            print(f"  [warn] skipping unsafe page path {raw_path!r}: {exc}")
-            return None
-        allowed_root = (WIKI_DIR / allowed_prefix).resolve()
-        if allowed_root not in resolved.parents:
-            print(
-                f"  [warn] skipping page path outside {allowed_prefix}/: {raw_path!r}"
-            )
-            return None
-        if resolved.suffix != ".md":
-            print(f"  [warn] skipping non-markdown page path: {raw_path!r}")
-            return None
-        return resolved
-
-    for page in data.get("entity_pages", []):
-        target = _safe_sub_path(page.get("path", ""), "entities")
-        if target is not None:
-            write_file(target, page.get("content", ""))
-
-    # Write concept pages
-    for page in data.get("concept_pages", []):
-        target = _safe_sub_path(page.get("path", ""), "concepts")
-        if target is not None:
-            write_file(target, page.get("content", ""))
-        
-    # Update overview
-    if data.get("overview_update"):
-        write_file(OVERVIEW_FILE, data["overview_update"])
-        
-    # Update index
-    if note_type == "paper":
-        section = "Papers"
-    elif note_type == "book":
-        section = "Books"
-    else:
-        section = "Notes"
-    update_index(data["index_entry"], section=section)
-    
-    # Log
-    append_log(data["log_entry"])
-
-    # Report contradictions
-    contradictions = data.get("contradictions", [])
-    if contradictions:
-        print("\n  ⚠️  Contradictions detected:")
-        for c in contradictions:
-            print(f"     - {c}")
-
-    # --- Post-ingest validation ---
-    created_pages = [f"sources/{data['slug']}.md"]
-    for page in data.get("entity_pages", []):
-        created_pages.append(page["path"])
-    for page in data.get("concept_pages", []):
-        created_pages.append(page["path"])
-    updated_pages = ["index.md", "log.md"]
-    if data.get("overview_update"):
-        updated_pages.append("overview.md")
-        
-    # Validate created/updated files
-    validation = validate_ingest(created_pages)
-
-    print(f"\n{'='*50}")
-    print(f"  ✅ Ingested: {data['title']}")
-    print(f"{'='*50}")
-    print(f"  Created : {len(created_pages)} pages")
-    for p in created_pages:
-        print(f"           + 30_wiki/{p}")
-    print(f"  Updated : {len(updated_pages)} pages")
-    for p in updated_pages:
-        print(f"           ~ 30_wiki/{p}")
-    if contradictions:
-        print(f"  Warnings: {len(contradictions)} contradiction(s)")
-    if validation["broken_links"]:
-        print(f"  ⚠️  Broken links: {len(validation['broken_links'])}")
-        for page, link in validation["broken_links"][:10]:
-            print(f"           30_wiki/{page} → [[{link}]]")
-        if len(validation["broken_links"]) > 10:
-            print(f"           ... and {len(validation['broken_links']) - 10} more")
-    if validation["unindexed"]:
-        print(f"  ⚠️  Not in index.md: {len(validation['unindexed'])}")
-        for p in validation["unindexed"][:10]:
-            print(f"           30_wiki/{p}")
-        if len(validation["unindexed"]) > 10:
-            print(f"           ... and {len(validation['unindexed']) - 10} more")
-    if not validation["broken_links"] and not validation["unindexed"]:
-        print("  ✓ Validation passed — no broken links, all pages indexed")
-    print()
-
-    update_status(
-        action=f"ingest | {data['title']}",
-        details=f"Created {len(created_pages)} pages. Contradictions: {len(contradictions)}"
-    )
-    
-    # Record which pages this source created so refresh.py can clean them up later
+    md_converter = MarkItDown()
     manifest = load_manifest()
-    manifest[str(source.resolve())] = [
-        str((WIKI_DIR / p).resolve()) for p in created_pages
-    ]
-    save_manifest(manifest)
+    ingest_model = os.getenv("INGEST_MODEL", "gemini-1.5-flash")
+
+    print(f"Ingesting {len(files_to_process)} files...")
+
+    for file_path in files_to_process:
+        # 2. Hash and check manifest
+        file_hash = sha256_file(file_path)
+        # Use relative path if possible, otherwise just filename
+        try:
+            rel_path = str(file_path.relative_to(RAW_DIR))
+        except ValueError:
+            rel_path = file_path.name
+        
+        if manifest.get(rel_path) == file_hash:
+            print(f"  [skip] {rel_path} (unchanged)")
+            continue
+
+        print(f"  [process] {rel_path}...")
+
+        # 3. Convert to Markdown
+        try:
+            result = md_converter.convert(str(file_path))
+            markdown_content = result.text_content
+        except Exception as e:
+            print(f"    [error] MarkItDown failed on {file_path.name}: {e}")
+            continue
+
+        # Save markdown
+        slug = file_path.stem.lower().replace(" ", "-")
+        md_save_path = MARKDOWN_DIR / f"{slug}.md"
+        write_file(md_save_path, markdown_content)
+
+        # 4. Generate Summary via Gemini
+        prompt = f"""Analyze this document and return a JSON summary.
+        Document Content:
+        {markdown_content[:20000]} 
+
+        Return ONLY a JSON object with these fields:
+        {{
+          "file": "{file_path.name}",
+          "hash": "{file_hash}",
+          "type": "{file_path.suffix[1:].upper()}",
+          "language": "Detect language",
+          "keywords": ["list", "of", "keywords"],
+          "summary": "One paragraph summary",
+          "folder_path": "{str(file_path.parent)}",
+          "ingested_at": "{datetime.now().isoformat()}"
+        }}
+        """
+        
+        try:
+            response_text = _call_gemini(prompt, max_tokens=2048, model_override=ingest_model)
+            summary_data = parse_json_from_response(response_text)
+        except Exception as e:
+            print(f"    [error] Gemini summarization failed: {e}")
+            continue
+
+        # Save summary
+        summary_save_path = SUMMARIES_DIR / f"{slug}.json"
+        write_file(summary_save_path, json.dumps(summary_data, indent=2))
+
+        # Update manifest
+        manifest[rel_path] = file_hash
+        save_manifest(manifest)
+
+    # 5. Rebuild Index
+    rebuild_index()
     
 def update_status(action: str, details: str):
     """Write a status file so Gemini CLI knows the current wiki state."""
@@ -483,89 +440,7 @@ def update_status(action: str, details: str):
 
 
 if __name__ == "__main__":
-    # Handle --validate-only flag
-    if len(sys.argv) == 2 and sys.argv[1] == "--validate-only":
-        print("Running wiki validation (no ingest)...\n")
-        result = validate_ingest()
-        if result["broken_links"]:
-            print(f"Broken wikilinks: {len(result['broken_links'])}")
-            for page, link in result["broken_links"][:20]:
-                print(f"  30_wiki/{page} → [[{link}]]")
-            if len(result["broken_links"]) > 20:
-                print(f"  ... and {len(result['broken_links']) - 20} more")
-        else:
-            print("No broken wikilinks found.")
-        print()
-        pages = all_wiki_pages()
-        index_content = read_file(INDEX_FILE).lower()
-        unindexed_all = []
-        for p in WIKI_DIR.rglob("*.md"):
-            if p.name in ("index.md", "log.md", "lint-report.md", "overview.md"):
-                continue
-            if p.stem.lower() not in index_content:
-                unindexed_all.append(str(p.relative_to(WIKI_DIR)))
-        if unindexed_all:
-            print(f"Pages not in index.md: {len(unindexed_all)}")
-            for up in unindexed_all[:20]:
-                print(f"  30_wiki/{up}")
-            if len(unindexed_all) > 20:
-                print(f"  ... and {len(unindexed_all) - 20} more")
-        else:
-            print("All pages are indexed.")
-        sys.exit(0)
-
     if len(sys.argv) < 2:
-        print("Usage: python tools/ingest.py <path-to-source> [path2 ...] [dir1 ...]")
-        print("       python tools/ingest.py --validate-only")
+        print("Usage: python tools/ingest.py <path>")
         sys.exit(1)
-        
-    paths_to_process = []
-    for arg in sys.argv[1:]:
-        p = Path(arg)
-        if p.is_file() and p.suffix == ".md":
-            paths_to_process.append(p)
-        elif p.is_dir():
-            for f in p.rglob("*.md"):
-                if f.is_file():
-                    paths_to_process.append(f)
-        else:
-            import glob
-            for f in glob.glob(arg, recursive=True):
-                g_p = Path(f)
-                if g_p.is_file() and g_p.suffix == ".md":
-                    paths_to_process.append(g_p)
-                    
-    # Deduplicate while preserving order
-    unique_paths = []
-    seen = set()
-    for p in paths_to_process:
-        abs_p = p.resolve()
-        if abs_p not in seen:
-            seen.add(abs_p)
-            unique_paths.append(p)
-
-    if not unique_paths:
-        print("Error: no markdown files found to ingest.")
-        sys.exit(1)
-        
-    if len(unique_paths) > 1:
-        print(f"Batch mode: found {len(unique_paths)} files to ingest.")
-        
-    for p in unique_paths:
-        ingest(str(p))
-        
-    # NEW — rebuild root ATLAS once after batch completes
-    atlas_script = REPO_ROOT.parent.parent / "update_atlas.py"
-    if atlas_script.exists():
-        import subprocess
-        print("\nUpdating central ATLAS...")
-        subprocess.run(
-            [sys.executable, str(atlas_script)],
-            cwd=REPO_ROOT.parent.parent
-        )
-
-    # Run gemini
-    if "--handoff" in sys.argv:
-        import subprocess
-        print("\nHanding off to Gemini CLI...")
-        subprocess.run(["gemini"], cwd=REPO_ROOT)
+    ingest(sys.argv[1])
