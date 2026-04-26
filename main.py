@@ -12,6 +12,7 @@ TOOL_MAP = {
     "query":   "tools/query.py",
     "refresh": "tools/refresh.py",
     "serve":   "server/app.py",
+    "start":   "tools/start.py",
 }
 
 def main():
