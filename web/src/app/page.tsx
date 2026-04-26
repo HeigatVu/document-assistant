@@ -1,8 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { FileText, Send, Loader2, CheckCircle2, Sparkles } from "lucide-react";
+import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload } from "lucide-react";
+
+const TEMPLATES = [
+  { label: "Summarize", prompt: "Please provide a concise summary of the key points in these documents." },
+  { label: "Draft Report", prompt: "Generate a professional report structure based on the available documents, including an executive summary and recommendations." },
+  { label: "Action Items", prompt: "Extract all action items, owners, and deadlines mentioned in the documents." },
+];
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -13,6 +19,10 @@ export default function Dashboard() {
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState("");
   const [ingesting, setIngesting] = useState<string | null>(null);
+  const [readingModel, setReadingModel] = useState("gemini-1.5-pro");
+  const [writingModel, setWritingModel] = useState("gemini-1.5-flash");
+  const [templateFile, setTemplateFile] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchDocuments();
@@ -29,6 +39,27 @@ export default function Dashboard() {
       setIngesting(null);
     }
   };
+
+  const handleUploadTemplate = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const uploadRes = await axios.post(`${API_BASE}/upload`, formData);
+      const filename = uploadRes.data.filename;
+      await axios.post(`${API_BASE}/ingest`, { filename });
+      setTemplateFile(filename);
+      await fetchDocuments();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Upload failed");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const fetchDocuments = async () => {
     try {
@@ -50,8 +81,9 @@ export default function Dashboard() {
     try {
       const res = await axios.post(`${API_BASE}/task`, {
         prompt,
-        reading_model: "gemini-1.5-pro",
-        writing_model: "gemini-1.5-flash",
+        reading_model: readingModel,
+        writing_model: writingModel,
+        template_file: templateFile || null,
       });
       setResult(res.data);
       fetchDocuments(); // refresh list
@@ -64,6 +96,13 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30">
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleUploadTemplate}
+        className="hidden"
+        accept=".pdf,.docx"
+      />
       {/* Background gradients */}
       <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-600/20 blur-[120px]" />
@@ -169,7 +208,53 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+            <div className="flex flex-wrap items-center gap-4 px-2 mb-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
+              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
+                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Reader</span>
+                <select 
+                  value={readingModel}
+                  onChange={(e) => setReadingModel(e.target.value)}
+                  className="bg-transparent text-xs font-medium text-indigo-400 focus:outline-none cursor-pointer hover:text-indigo-300 transition-colors"
+                >
+                  <option value="gemini-1.5-pro">Gemini Pro (Smart)</option>
+                  <option value="gemini-1.5-flash">Gemini Flash (Fast)</option>
+                </select>
+              </div>
 
+              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
+                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Writer</span>
+                <select 
+                  value={writingModel}
+                  onChange={(e) => setWritingModel(e.target.value)}
+                  className="bg-transparent text-xs font-medium text-purple-400 focus:outline-none cursor-pointer hover:text-purple-300 transition-colors"
+                >
+                  <option value="gemini-1.5-flash">Gemini Flash (Fast)</option>
+                  <option value="gemini-1.5-pro">Gemini Pro (Smart)</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
+                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Style Reference</span>
+                <select 
+                  value={templateFile}
+                  onChange={(e) => setTemplateFile(e.target.value)}
+                  className="bg-transparent text-xs font-medium text-emerald-400 focus:outline-none cursor-pointer hover:text-emerald-300 transition-colors max-w-[120px]"
+                >
+                  <option value="">None</option>
+                  {documents.filter(d => d.status === 'ingested').map((doc, idx) => (
+                    <option key={idx} value={doc.name}>{doc.name.split('/').pop()}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
+                  className="p-1 hover:bg-slate-800 text-slate-500 hover:text-emerald-400 rounded-lg transition-all"
+                  title="Upload template from laptop"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
             {/* Input Form */}
             <form onSubmit={submitTask} className="relative group">
               <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-[2rem] blur opacity-20 group-hover:opacity-40 transition duration-500" />

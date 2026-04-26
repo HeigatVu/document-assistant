@@ -8,6 +8,7 @@ from typing import Optional
 from tools.task import process_task
 from tools.ingest import ingest
 from tools.utils import RAW_DIR, OUTPUT_DIR, load_manifest
+from fastapi import FastAPI, HTTPException, File, UploadFile
 
 app = FastAPI(title="Wiki LLM Document Assistant")
 
@@ -25,6 +26,7 @@ class TaskRequest(BaseModel):
     reading_model: str = "gemini-1.5-pro"
     writing_model: str = "gemini-1.5-flash"
     uploaded_file: Optional[str] = None
+    template_file: Optional[str] = None 
 
 class IngestRequest(BaseModel):
     filename: str
@@ -58,8 +60,17 @@ def get_documents():
 @app.post("/api/task")
 def post_task(req: TaskRequest):
     output_path = OUTPUT_DIR / f"output_{int(time.time())}.docx"
-    
+
+    template_file_path = None
     uploaded_file_path = None
+    if req.template_file:
+        t_requested_path = (RAW_DIR / req.template_file).resolve()
+        if RAW_DIR.resolve() not in t_requested_path.parents:
+            raise HTTPException(status_code=400, detail="Invalid template path")
+        template_file_path = t_requested_path
+        if not template_file_path.exists():
+            raise HTTPException(status_code=400, detail="Template file not found")
+            
     if req.uploaded_file:
         requested_path = (RAW_DIR / req.uploaded_file).resolve()
         if RAW_DIR.resolve() not in requested_path.parents:
@@ -71,6 +82,7 @@ def post_task(req: TaskRequest):
         result = process_task(
             prompt=req.prompt,
             uploaded_file_path=uploaded_file_path,
+            template_file_path=template_file_path, 
             reading_model=req.reading_model,
             writing_model=req.writing_model,
             save_path=output_path
@@ -100,6 +112,20 @@ def post_ingest(req: IngestRequest):
         # Trigger ingestion
         ingest(requested_path)
         return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+    
+    # Save the file to RAW_DIR
+    file_path = RAW_DIR / file.filename
+    try:
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
+        return {"filename": file.filename}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

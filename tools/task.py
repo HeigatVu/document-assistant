@@ -16,10 +16,11 @@ class TaskResult:
 
 def process_task(
     prompt: str,
-    uploaded_file_path: Optional[Path],
-    reading_model: str,
-    writing_model: str,
-    save_path: Path
+    uploaded_file_path: Optional[Path] = None,
+    template_file_path: Optional[Path] = None, 
+    reading_model: str = "gemini-1.5-pro",
+    writing_model: str = "gemini-1.5-flash",
+    save_path: Path = Path("output.docx")
 ) -> TaskResult:
     """Process a user task to create or edit a DOCX document."""
     
@@ -27,6 +28,14 @@ def process_task(
     search_results = search_index(prompt, top_k=3)
     referenced_files = [res.get("file") for res in search_results if "file" in res]
     
+    style_guide = ""
+    if template_file_path:
+        from tools.utils import PROCESSED_DIR
+        template_md_path = PROCESSED_DIR / f"{template_file_path.name}.md"
+        if template_md_path.exists():
+            style_guide = f"\nSTYLE & STRUCTURE REFERENCE (Follow this style):\n{template_md_path.read_text()}\n"
+        else:
+            style_guide = f"\nSTYLE & STRUCTURE REFERENCE: [Filename: {template_file_path.name}]\n"
     # Context building
     context_str = "\n".join(
         f"Reference ({res.get('file')}): {res.get('summary')}"
@@ -35,6 +44,7 @@ def process_task(
     
     # 2. Plan phase (Reading Model)
     plan_prompt = f"""You are a document assistant. Create a plan to fulfill the user's request.
+{style_guide}
 Context:
 {context_str}
 
@@ -44,6 +54,7 @@ User Request: {prompt}"""
     
     # 3. Write phase (Writing Model)
     write_prompt = f"""Based on this plan, generate the document changes or new document in JSON.
+{style_guide}
 Plan:
 {plan}
 
