@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload, Clock, X } from "lucide-react";
+import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload, Clock, X, Terminal } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -14,8 +14,8 @@ export default function Dashboard() {
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState("");
   const [ingesting, setIngesting] = useState<string | null>(null);
-  const [readingModel, setReadingModel] = useState("gemini-1.5-pro");
-  const [writingModel, setWritingModel] = useState("gemini-1.5-flash");
+  const [readingModel, setReadingModel] = useState("gemini-3-flash-preview");
+  const [writingModel, setWritingModel] = useState("gemini-3.1-flash-lite-preview");
   const [templateFile, setTemplateFile] = useState("");
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [useCli, setUseCli] = useState(false);
@@ -297,54 +297,7 @@ export default function Dashboard() {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 px-2 mb-2 animate-in fade-in slide-in-from-bottom-2 duration-700">
-              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
-                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Reader</span>
-                <select 
-                  value={readingModel}
-                  onChange={(e) => setReadingModel(e.target.value)}
-                  className="bg-transparent text-xs font-medium text-indigo-400 focus:outline-none cursor-pointer hover:text-indigo-300 transition-colors"
-                >
-                  <option value="gemini-1.5-pro">Gemini Pro (Smart)</option>
-                  <option value="gemini-1.5-flash">Gemini Flash (Fast)</option>
-                </select>
-              </div>
 
-              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
-                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Writer</span>
-                <select 
-                  value={writingModel}
-                  onChange={(e) => setWritingModel(e.target.value)}
-                  className="bg-transparent text-xs font-medium text-purple-400 focus:outline-none cursor-pointer hover:text-purple-300 transition-colors"
-                >
-                  <option value="gemini-1.5-flash">Gemini Flash (Fast)</option>
-                  <option value="gemini-1.5-pro">Gemini Pro (Smart)</option>
-                </select>
-              </div>
-              
-              <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 shadow-inner">
-                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Style Reference</span>
-                <select 
-                  value={templateFile}
-                  onChange={(e) => setTemplateFile(e.target.value)}
-                  className="bg-transparent text-xs font-medium text-emerald-400 focus:outline-none cursor-pointer hover:text-emerald-300 transition-colors max-w-[120px]"
-                >
-                  <option value="">None</option>
-                  {documents.filter(d => d.status === 'ingested').map((doc, idx) => (
-                    <option key={idx} value={doc.name}>{doc.name.split('/').pop()}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={loading}
-                  className="p-1 hover:bg-slate-800 text-slate-500 hover:text-emerald-400 rounded-lg transition-all"
-                  title="Upload template from laptop"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
             
             {/* Input Form */}
             <form onSubmit={submitTask} className="relative group">
@@ -358,6 +311,23 @@ export default function Dashboard() {
                   className="flex-1 bg-transparent border-none focus:outline-none px-4 py-3 text-slate-200 placeholder:text-slate-600 text-[15px]"
                   disabled={loading}
                 />
+                
+                {/* CLI Toggle inside Chat Input */}
+                <button
+                  type="button"
+                  onClick={() => setUseCli(!useCli)}
+                  disabled={loading}
+                  className={`p-2 mr-2 rounded-xl flex items-center gap-1.5 transition-all text-xs font-bold border ${
+                    useCli 
+                      ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/30" 
+                      : "bg-slate-800/50 text-slate-400 border-slate-700/50 hover:bg-slate-800 hover:text-slate-300"
+                  }`}
+                  title={useCli ? "Using Gemini CLI" : "Using API (Click to use CLI)"}
+                >
+                  <Terminal className="w-4 h-4" />
+                  <span className="hidden sm:inline">CLI</span>
+                </button>
+
                 <button
                   type="submit"
                   disabled={loading || !prompt.trim()}

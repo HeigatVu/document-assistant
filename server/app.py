@@ -1,3 +1,4 @@
+import os
 import time
 import uvicorn
 from fastapi import FastAPI, HTTPException, File, UploadFile
@@ -23,8 +24,8 @@ app.add_middleware(
 
 class TaskRequest(BaseModel):
     prompt: str
-    reading_model: str = "gemini-1.5-pro"
-    writing_model: str = "gemini-1.5-flash"
+    reading_model: str = os.getenv("READING_MODEL", "gemini-3-flash-preview")
+    writing_model: str = os.getenv("WRITING_MODEL", "gemini-3.1-flash-lite-preview")
     uploaded_file: Optional[str] = None
     template_file: Optional[str] = None 
     type_filter: Optional[str] = None

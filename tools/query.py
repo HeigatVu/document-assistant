@@ -84,7 +84,9 @@ Example output:
     
     try:
         # Using the fast model for routing
-        response_text = call_gemini(prompt, max_tokens=1024, model_override="gemini-2.0-flash-lite-preview-02-05", use_cli=use_cli)
+        import os
+        routing_model = os.getenv("INGEST_MODEL", "gemini-3.1-flash-lite-preview")
+        response_text = call_gemini(prompt, max_tokens=1024, model_override=routing_model, use_cli=use_cli)
         results = parse_json_from_response(response_text)
         if isinstance(results, list):
             return results

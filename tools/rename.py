@@ -45,7 +45,7 @@ Return ONLY a JSON object with these exact keys:
 }}
 """
 
-    model_name = os.getenv("INGEST_MODEL", "gemini-2.0-flash-lite-preview-02-05")
+    model_name = os.getenv("INGEST_MODEL", "gemini-3.1-flash-lite-preview")
     
     try:
         response_text = call_gemini(prompt, max_tokens=1024, model_override=model_name, file_path=file_path)

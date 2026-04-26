@@ -77,7 +77,7 @@ def ingest(path: Path | str) -> None:
 
     manifest = load_manifest()
     # Use the flash lite model as requested, or fallback to the env variable
-    ingest_model = os.getenv("INGEST_MODEL", "gemini-2.0-flash-lite-preview-02-05")
+    ingest_model = os.getenv("INGEST_MODEL", "gemini-3.1-flash-lite-preview")
 
     print(f"Ingesting {len(files_to_process)} files using {ingest_model}...")
 

@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -18,8 +19,8 @@ def process_task(
     prompt: str,
     uploaded_file_path: Optional[Path] = None,
     template_file_path: Optional[Path] = None, 
-    reading_model: str = "gemini-1.5-pro",
-    writing_model: str = "gemini-1.5-flash",
+    reading_model: str = os.getenv("READING_MODEL", "gemini-3-flash-preview"),
+    writing_model: str = os.getenv("WRITING_MODEL", "gemini-3.1-flash-lite-preview"),
     save_path: Path = Path("output.docx"),
     type_filter: Optional[str] = None,
     use_cli: bool = False
