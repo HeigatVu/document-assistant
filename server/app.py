@@ -1,14 +1,14 @@
 import time
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
 from tools.task import process_task
 from tools.ingest import ingest
-from tools.utils import RAW_DIR, OUTPUT_DIR, load_manifest
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from tools.utils import RAW_DIR, OUTPUT_DIR, load_manifest, HISTORY_FILE
+import json
 
 app = FastAPI(title="Wiki LLM Document Assistant")
 
@@ -31,6 +31,20 @@ class TaskRequest(BaseModel):
 class IngestRequest(BaseModel):
     filename: str
 
+def load_history() -> list[dict]:
+    """Load task history from JSON file."""
+    if HISTORY_FILE.exists():
+        try:
+            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, IOError):
+            return []
+    return []
+def append_history(entry: dict):
+    """Append a new entry to the history file."""
+    history = load_history()
+    history.append(entry)
+    HISTORY_FILE.write_text(json.dumps(history, indent=2), encoding="utf-8")
+
 def list_documents() -> list[str]:
     """List documents in RAW_DIR."""
     if not RAW_DIR.exists():
@@ -48,6 +62,10 @@ def list_documents() -> list[str]:
             except ValueError:
                 docs.append({"name": path.name, "status": "pending"})
     return docs
+
+@app.get("/api/history")
+def get_history():
+    return {"history": load_history()[::-1]} 
 
 @app.get("/api/status")
 def get_status():
@@ -88,12 +106,17 @@ def post_task(req: TaskRequest):
             save_path=output_path
         )
         
-        return {
-            "success": result.success,
+        history_entry = {
+            "id": int(time.time()),
+            "prompt": req.prompt,
             "summary": result.summary,
             "output_file": str(result.output_path.name),
-            "referenced_files": result.referenced_files
+            "referenced_files": result.referenced_files,
+            "success": result.success,
+            "created_at": time.strftime("%Y-%m-%d %H:%M")
         }
+        append_history(history_entry)
+        return history_entry 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

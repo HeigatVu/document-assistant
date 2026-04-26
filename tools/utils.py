@@ -14,9 +14,11 @@ RAW_DIR = REPO_ROOT / "raw"
 PROCESSED_DIR = REPO_ROOT / "processed"
 MARKDOWN_DIR = PROCESSED_DIR / "markdown"
 SUMMARIES_DIR = PROCESSED_DIR / "summaries"
+CHUNKS_DIR = PROCESSED_DIR / "chunks"
 INDEX_FILE = PROCESSED_DIR / "index.json"
 OUTPUT_DIR = REPO_ROOT / "output"
 MANIFEST_FILE = PROCESSED_DIR / ".ingest_manifest.json"
+HISTORY_FILE = PROCESSED_DIR / "history.json"
 
 
 def call_gemini(prompt: str, max_tokens: int, model_override: str | None = None) -> str:

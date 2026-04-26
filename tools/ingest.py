@@ -15,6 +15,7 @@ from tools.utils import (
     PROCESSED_DIR,
     MARKDOWN_DIR,
     SUMMARIES_DIR,
+    CHUNKS_DIR,
     INDEX_FILE,
 )
 
@@ -85,6 +86,27 @@ def ingest(path: Path | str) -> None:
         slug = file_path.stem.lower().replace(" ", "-")
         md_save_path = MARKDOWN_DIR / f"{slug}.md"
         write_file(md_save_path, markdown_content)
+        print(f"    [chunking] {rel_path}...")
+        paragraphs = markdown_content.split("\n\n")
+        chunks = []
+        current_chunk = ""
+        for p in paragraphs:
+            if len(current_chunk) + len(p) > 1000 and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = p
+            else:
+                current_chunk += "\n\n" + p if current_chunk else p
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        for i, chunk_text in enumerate(chunks):
+            chunk_data = {
+                "file": rel_path,
+                "chunk_index": i,
+                "total_chunks": len(chunks),
+                "text": chunk_text
+            }
+            chunk_save_path = CHUNKS_DIR / f"{slug}_chunk_{i}.json"
+            write_file(chunk_save_path, json.dumps(chunk_data, indent=2))
 
         # 4. Generate Summary via Gemini
         prompt = f"""Analyze this document and return a JSON summary.

@@ -1,43 +1,67 @@
 import sys
 import json
 from pathlib import Path
-from tools.utils import INDEX_FILE
+from tools.utils import INDEX_FILE, CHUNKS_DIR
 
-def search_index(keyword: str, top_k: int = 5) -> list[dict]:
-    """Search processed/index.json for the keyword."""
-    if not INDEX_FILE.exists():
+def search_chunks(keyword: str, top_k: int = 5) -> list[dict]:
+    """Search processed/chunks/*.json for the keyword."""
+    if not CHUNKS_DIR.exists():
         return []
-        
-    try:
-        index_data = json.loads(INDEX_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
-        
+    
     query = keyword.lower()
+    chunk_results = []
+    
+    for chunk_file in CHUNKS_DIR.glob("*.json"):
+        try:
+            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
+            text = chunk.get("text", "").lower()
+            
+            if query in text:
+                # Basic scoring: 2 points for a hit
+                chunk_results.append({
+                    "file": chunk["file"],
+                    "summary": chunk["text"][:500] + "...", # Use the chunk text itself as context
+                    "score": 2
+                })
+        except Exception:
+            continue
+            
+    chunk_results.sort(key=lambda x: x["score"], reverse=True)
+    return chunk_results[:top_k]
+    
+def search_index(keyword: str, top_k: int = 5) -> list[dict]:
+    """Search both index.json and chunks for the keyword."""
+    # 1. Search document-level summaries (existing logic)
     results = []
-    
-    for entry in index_data:
-        score = 0
-        
-        # Check keywords (score of 2 for keyword match)
-        keywords = entry.get("keywords", [])
-        for kw in keywords:
-            if query in kw.lower():
-                score += 2
+    if INDEX_FILE.exists():
+        try:
+            index_data = json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+            query = keyword.lower()
+            for entry in index_data:
+                score = 0
+                keywords = entry.get("keywords", [])
+                for kw in keywords:
+                    if query in kw.lower(): score += 2
+                summary = entry.get("summary", "").lower()
+                if query in summary: score += 1
                 
-        # Check summary (score of 1 for summary match)
-        summary = entry.get("summary", "").lower()
-        if query in summary:
-            score += 1
-            
-        if score > 0:
-            results.append({"entry": entry, "score": score})
-            
-    # Sort by score descending
-    results.sort(key=lambda x: x["score"], reverse=True)
+                if score > 0:
+                    results.append({"file": entry.get("file"), "summary": entry.get("summary"), "score": score})
+        except Exception:
+            pass
+    # 2. Search chunk-level content (new logic)
+    chunk_results = search_chunks(keyword, top_k)
     
-    # Return top_k entries
-    return [r["entry"] for r in results[:top_k]]
+    # 3. Merge and deduplicate by file (keep highest score)
+    merged = {}
+    for r in results + chunk_results:
+        fname = r["file"]
+        if fname not in merged or r["score"] > merged[fname]["score"]:
+            merged[fname] = r
+            
+    final_results = list(merged.values())
+    final_results.sort(key=lambda x: x["score"], reverse=True)
+    return final_results[:top_k]
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload } from "lucide-react";
+import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload, Clock } from "lucide-react";
 
 const TEMPLATES = [
   { label: "Summarize", prompt: "Please provide a concise summary of the key points in these documents." },
@@ -23,12 +23,22 @@ export default function Dashboard() {
   const [writingModel, setWritingModel] = useState("gemini-1.5-flash");
   const [templateFile, setTemplateFile] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [history, setHistory] = useState<any[]>([]);
 
   useEffect(() => {
     fetchDocuments();
+    fetchHistory();
   }, []);
 
-    const ingestDocument = async (filename: string) => {
+  const fetchHistory = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/history`);
+      setHistory(res.data.history);
+    } catch (err) {
+      console.error("Failed to fetch history", err);
+    }
+  };
+  const ingestDocument = async (filename: string) => {
     setIngesting(filename);
     try {
       await axios.post(`${API_BASE}/ingest`, { filename });
@@ -87,6 +97,7 @@ export default function Dashboard() {
       });
       setResult(res.data);
       fetchDocuments(); // refresh list
+      fetchHistory();
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message);
     } finally {
@@ -169,13 +180,37 @@ export default function Dashboard() {
           {/* Main Task Area */}
           <section className="lg:col-span-2 flex flex-col gap-4">
             {/* Task Result / History */}
-            <div className="flex-1 bg-slate-900/50 backdrop-blur-xl rounded-3xl border border-slate-800 p-6 shadow-2xl overflow-y-auto flex flex-col justify-end">
-              {error && (
-                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-2xl mb-4 animate-in fade-in slide-in-from-bottom-4">
-                  <p className="font-medium">Error</p>
-                  <p className="text-sm opacity-80">{error}</p>
+            <div className="flex-1 bg-slate-900/50 backdrop-blur-xl rounded-3xl border border-slate-800 p-6 shadow-2xl overflow-y-auto flex flex-col">
+              
+              {/* History List */}
+              {history.length > 0 && (
+                <div className="space-y-3 mb-6 pb-6 border-b border-slate-800/50">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2">
+                    <Clock className="w-3 h-3" />
+                    Recent Activity
+                  </h3>
+                  {history.map((item, idx) => (
+                    <div key={idx} className="p-4 rounded-2xl bg-slate-800/20 border border-slate-800/50 hover:border-indigo-500/20 transition-all group">
+                      <div className="flex justify-between items-start mb-2">
+                        <p className="text-xs font-medium text-slate-400 line-clamp-1 flex-1 pr-4 italic">
+                          "{item.prompt}"
+                        </p>
+                        <span className="text-[10px] text-slate-600 font-mono whitespace-nowrap">
+                          {item.created_at}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-300 line-clamp-2 mb-3 leading-relaxed">
+                        {item.summary}
+                      </p>
+                      <div className="flex items-center gap-2 text-[10px] font-medium text-indigo-400/70">
+                        <FileText className="w-3 h-3" />
+                        {item.output_file}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
+
               
               {result && (
                 <div className="bg-indigo-500/10 border border-indigo-500/20 p-5 rounded-2xl animate-in fade-in slide-in-from-bottom-4">
