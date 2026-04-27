@@ -61,6 +61,9 @@ def clone_and_fill(source_path: Path, changes_json: dict, output_path: Path) -> 
     doc.save(output_path)
 
 
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Twips
+
 def create_docx(content_json: dict, output_path: Path) -> None:
     """Create a new DOCX file from structured JSON content."""
     doc = docx.Document()
@@ -74,20 +77,25 @@ def create_docx(content_json: dict, output_path: Path) -> None:
     for section in sections:
         stype = section.get("type")
         text = section.get("text", "")
+        fmt_config = section.get("format", {})
         
+        p = None
         if stype == "heading":
             level = section.get("level", 1)
-            doc.add_heading(text, level)
+            p = doc.add_heading(text, level)
         elif stype == "paragraph":
-            doc.add_paragraph(text)
+            p = doc.add_paragraph(text)
         elif stype == "bullet_list":
             items = section.get("items", [])
             for item in items:
-                doc.add_paragraph(item, style='List Bullet')
+                p_item = doc.add_paragraph(item, style='List Bullet')
+                # Apply formatting to list items if provided
+                apply_paragraph_format(p_item, fmt_config)
         elif stype == "numbered_list":
             items = section.get("items", [])
             for item in items:
-                doc.add_paragraph(item, style='List Number')
+                p_item = doc.add_paragraph(item, style='List Number')
+                apply_paragraph_format(p_item, fmt_config)
         elif stype == "table":
             headers = section.get("headers", [])
             rows = section.get("rows", [])
@@ -104,15 +112,42 @@ def create_docx(content_json: dict, output_path: Path) -> None:
                     for i, val in enumerate(row_data):
                         if i < len(row_cells):
                             row_cells[i].text = str(val)
+        
+        if p and fmt_config:
+            apply_paragraph_format(p, fmt_config)
 
     # Backward compatibility for old flat format
     content = content_json.get("content", "")
     if content and not sections:
         # Split by newlines and create paragraphs
         paragraphs = content.split('\n')
-        for p in paragraphs:
-            if p.strip():
-                doc.add_paragraph(p.strip())
+        for p_text in paragraphs:
+            if p_text.strip():
+                doc.add_paragraph(p_text.strip())
                 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(output_path)
+
+def apply_paragraph_format(p, fmt_config: dict):
+    """Utility to apply formatting to a paragraph object."""
+    if not p or not fmt_config:
+        return
+        
+    pf = p.paragraph_format
+    
+    if "indent_left" in fmt_config:
+        pf.left_indent = Twips(int(fmt_config["indent_left"]))
+    
+    if "first_line_indent" in fmt_config:
+        pf.first_line_indent = Twips(int(fmt_config["first_line_indent"]))
+        
+    if "alignment" in fmt_config:
+        align_str = fmt_config["alignment"].upper()
+        if align_str == "LEFT":
+            pf.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        elif align_str == "CENTER":
+            pf.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        elif align_str == "RIGHT":
+            pf.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        elif align_str == "JUSTIFY":
+            pf.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY

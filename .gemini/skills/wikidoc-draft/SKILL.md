@@ -17,14 +17,15 @@ Example: `/wikidoc-draft a research participation consent form for the Alzheimer
 
 ## Workflow
 
-1. **Search Library**: Read `processed/index.json` to find relevant templates or example documents.
+1. **Search Library**: Read `processed/index.json` to find relevant templates or example documents. Look for the `style_profile` field in the results to understand the document's formatting.
 2. **Retrieve Context**: Read the markdown of selected documents from `processed/markdown/` to understand structure and content.
 3. **Plan & Draft**: Decide whether to fill an existing template or create a new document from scratch. Generate the structured JSON.
-4. **Export to DOCX**:
+4. **Apply Formatting**: If creating a new document, use the `format` object in your JSON sections to match the `style_profile` of your reference documents (e.g., matching indentation or alignment).
+5. **Export to DOCX**:
    - Save JSON draft to `output/draft.json`.
    - For new documents: `uv run tools/export_docx.py output/draft.json output/<filename>.docx`
    - For template filling: `uv run tools/export_docx.py output/draft.json output/<filename>.docx --template <path_to_template>`
-5. **Verify**: Confirm the file was created and report the output path.
+6. **Verify**: Confirm the file was created and report the output path.
 
 ## JSON Schemas
 
@@ -34,10 +35,16 @@ Example: `/wikidoc-draft a research participation consent form for the Alzheimer
   "title": "Title",
   "sections": [
     {"type": "heading", "level": 1, "text": "Heading"},
-    {"type": "heading", "level": 2, "text": "Sub-heading"},
-    {"type": "paragraph", "text": "Text..."},
+    {
+      "type": "paragraph", 
+      "text": "Text...",
+      "format": {
+        "indent_left": 720,
+        "first_line_indent": 360,
+        "alignment": "JUSTIFY"
+      }
+    },
     {"type": "bullet_list", "items": ["Item 1", "Item 2"]},
-    {"type": "numbered_list", "items": ["Step 1", "Step 2"]},
     {"type": "table", "headers": ["H1", "H2"], "rows": [["V1", "V2"]]}
   ]
 }

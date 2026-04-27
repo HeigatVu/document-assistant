@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import axios from "axios";
 import { FileText, Send, Loader2, CheckCircle2, Sparkles, Upload, Clock, X, Terminal, ExternalLink, FolderOpen, Trash2 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -36,6 +35,7 @@ export default function Dashboard() {
   const [templateFile, setTemplateFile] = useState("");
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [useCli, setUseCli] = useState(false);
+  const [processLogs, setProcessLogs] = useState<{step: string, details: string}[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [history, setHistory] = useState<any[]>([]);
 
@@ -47,8 +47,9 @@ export default function Dashboard() {
 
   const fetchTypes = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/types`);
-      setTypes(res.data.types);
+      const res = await fetch(`${API_BASE}/types`);
+      const data = await res.json();
+      setTypes(data.types || []);
     } catch (err) {
       console.error("Failed to fetch types", err);
     }
@@ -56,8 +57,9 @@ export default function Dashboard() {
 
   const fetchHistory = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/history`);
-      setHistory(res.data.history);
+      const res = await fetch(`${API_BASE}/history`);
+      const data = await res.json();
+      setHistory(data.history || []);
     } catch (err) {
       console.error("Failed to fetch history", err);
     }
@@ -66,11 +68,16 @@ export default function Dashboard() {
   const ingestDocument = async (filename: string) => {
     setIngesting(filename);
     try {
-      await axios.post(`${API_BASE}/ingest`, { filename });
+      const res = await fetch(`${API_BASE}/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      });
+      if (!res.ok) throw new Error("Ingestion failed");
       await fetchDocuments();
       await fetchTypes();
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Ingestion failed");
+      setError(err.message || "Ingestion failed");
     } finally {
       setIngesting(null);
     }
@@ -78,7 +85,11 @@ export default function Dashboard() {
 
   const openDocument = async (filename: string) => {
     try {
-      await axios.post(`${API_BASE}/open`, { filename });
+      await fetch(`${API_BASE}/open`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      });
     } catch (err: any) {
       console.error("Failed to open document", err);
     }
@@ -86,7 +97,11 @@ export default function Dashboard() {
 
   const openOutputFile = async (filename: string) => {
     try {
-      await axios.post(`${API_BASE}/open_output`, { filename });
+      await fetch(`${API_BASE}/open_output`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      });
     } catch (err: any) {
       console.error("Failed to open output document", err);
     }
@@ -94,7 +109,7 @@ export default function Dashboard() {
 
   const openRawDir = async () => {
     try {
-      await axios.post(`${API_BASE}/open_dir`);
+      await fetch(`${API_BASE}/open_dir`, { method: "POST" });
     } catch (err: any) {
       console.error("Failed to open directory", err);
     }
@@ -102,7 +117,11 @@ export default function Dashboard() {
 
   const openOutputFolder = async (filename: string) => {
     try {
-      await axios.post(`${API_BASE}/open_output_folder`, { filename });
+      await fetch(`${API_BASE}/open_output_folder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      });
     } catch (err: any) {
       console.error("Failed to open output folder", err);
     }
@@ -111,7 +130,11 @@ export default function Dashboard() {
   const deleteTask = async (id: number, filename: string) => {
     if (!confirm("Are you sure you want to delete this output file and history entry?")) return;
     try {
-      await axios.post(`${API_BASE}/delete_task`, { id, filename });
+      await fetch(`${API_BASE}/delete_task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, filename }),
+      });
       await fetchHistory();
     } catch (err: any) {
       console.error("Failed to delete task", err);
@@ -127,14 +150,24 @@ export default function Dashboard() {
     formData.append("file", file);
 
     try {
-      const uploadRes = await axios.post(`${API_BASE}/upload`, formData);
-      const filename = uploadRes.data.filename;
-      await axios.post(`${API_BASE}/ingest`, { filename });
+      const uploadRes = await fetch(`${API_BASE}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      const uploadData = await uploadRes.json();
+      const filename = uploadData.filename;
+      
+      await fetch(`${API_BASE}/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      });
+      
       setTemplateFile(filename);
       await fetchDocuments();
       await fetchTypes();
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Upload failed");
+      setError(err.message || "Upload failed");
     } finally {
       setLoading(false);
     }
@@ -142,8 +175,9 @@ export default function Dashboard() {
 
   const fetchDocuments = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/documents`);
-      setDocuments(res.data.documents);
+      const res = await fetch(`${API_BASE}/documents`);
+      const data = await res.json();
+      setDocuments(data.documents || []);
     } catch (err) {
       console.error("Failed to fetch documents", err);
     }
@@ -156,21 +190,67 @@ export default function Dashboard() {
     setLoading(true);
     setError("");
     setResult(null);
+    setProcessLogs([]);
     
     try {
-      const res = await axios.post(`${API_BASE}/task`, {
-        prompt,
-        reading_model: readingModel,
-        writing_model: writingModel,
-        template_file: templateFile || null,
-        type_filter: selectedType || null,
-        use_cli: useCli,
+      const response = await fetch(`${API_BASE}/task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          reading_model: readingModel,
+          writing_model: writingModel,
+          template_file: templateFile || null,
+          type_filter: selectedType || null,
+          use_cli: useCli,
+        }),
       });
-      setResult(res.data);
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || "Task failed");
+      }
+
+      if (useCli && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6);
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === "skill_update") {
+                  setProcessLogs((prev) => [...prev, { step: parsed.step, details: parsed.details }]);
+                } else if (parsed.id) {
+                  // This is the final history entry
+                  setResult(parsed);
+                }
+              } catch (e) {
+                // Not JSON, maybe a status message
+                console.log("Stream update:", data);
+              }
+            }
+          }
+        }
+      } else {
+        const data = await response.json();
+        setResult(data);
+      }
+      
       fetchDocuments(); // refresh list
       fetchHistory();
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -369,9 +449,51 @@ export default function Dashboard() {
                 </div>
               )}
               
-              {!result && !error && !loading && (
+              {!result && (
                 <div className={`flex flex-col items-center p-4 ${history.length > 0 && selectedType === null ? 'pt-8' : 'flex-1 justify-center min-h-[400px]'}`}>
-                  {selectedType ? (
+                  {loading ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 animate-in fade-in duration-500 w-full">
+                      <div className="relative mb-8">
+                        <div className="absolute inset-0 bg-indigo-500/20 blur-2xl rounded-full animate-pulse" />
+                        <Loader2 className="w-12 h-12 text-indigo-500 animate-spin relative z-10" />
+                      </div>
+                      
+                      {useCli ? (
+                        <div className="w-full max-w-md space-y-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-400/80">Expert Process</h3>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">CLI MODE</span>
+                          </div>
+                          <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-4 font-mono text-[11px] h-48 overflow-y-auto custom-scrollbar space-y-2 flex flex-col-reverse">
+                            {[...processLogs].reverse().map((log, i) => (
+                              <div key={i} className="animate-in slide-in-from-left-2 fade-in duration-300">
+                                <span className="text-purple-400 font-bold mr-2">[{log.step}]</span>
+                                <span className="text-slate-400 leading-relaxed">{log.details}</span>
+                              </div>
+                            ))}
+                            {processLogs.length === 0 && (
+                              <div className="text-slate-600 animate-pulse">Initializing expert skills...</div>
+                            )}
+                          </div>
+                          <p className="text-center text-slate-500 text-xs mt-4">Generating high-fidelity document structure...</p>
+                        </div>
+                      ) : (
+                        <div className="text-center">
+                          <h3 className="text-lg font-medium text-slate-300 mb-2">Gemini is writing...</h3>
+                          <p className="text-sm text-slate-500">This usually takes 15-30 seconds.</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : error ? (
+                    <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-sm flex items-start gap-3 animate-in shake-1 w-full max-w-md mx-auto">
+                      <X className="w-5 h-5 shrink-0" />
+                      <div>
+                        <h4 className="font-bold mb-1">Task Error</h4>
+                        <p>{error}</p>
+                        <button onClick={() => setError("")} className="mt-3 text-xs font-medium underline underline-offset-4 opacity-70 hover:opacity-100">Try again</button>
+                      </div>
+                    </div>
+                  ) : selectedType ? (
                     <div className="text-center animate-in fade-in zoom-in-95 duration-300">
                       <div className="inline-flex items-center gap-2 bg-indigo-500/20 text-indigo-300 px-5 py-2.5 rounded-full border border-indigo-500/30 mb-6 shadow-[0_0_20px_rgba(99,102,241,0.1)]">
                         <span className="text-sm font-semibold tracking-wide">Searching in: {selectedType}</span>

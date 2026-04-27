@@ -8,7 +8,7 @@ if str(root) not in sys.path:
     sys.path.insert(0, str(root))
 
 from tools.config import DEFAULT_INGEST_MODEL
-from tools.utils import INDEX_FILE, call_gemini, parse_json_from_response
+from tools.utils import INDEX_FILE, call_gemini, parse_json_from_response, log_skill_event, load_skill
 
 def fallback_search(query: str, index_data: list, top_k: int, type_filter: str = None) -> list[dict]:
     results = []
@@ -35,6 +35,12 @@ def search_index(query: str, top_k: int = 5, type_filter: str = None, use_cli: b
     if not INDEX_FILE.exists():
         return []
     
+    # Load Expert Skill (only in CLI mode)
+    expert_skill = ""
+    if use_cli:
+        expert_skill = load_skill("wikidoc-search")
+        log_skill_event("SEARCHING", f"Activated 'wikidoc-search' skill. Filtering index for: {query}", use_cli)
+
     try:
         index_data = json.loads(INDEX_FILE.read_text(encoding="utf-8"))
     except Exception:
@@ -57,7 +63,8 @@ def search_index(query: str, top_k: int = 5, type_filter: str = None, use_cli: b
     if not catalog:
         return []
         
-    prompt = f"""You are a smart document retrieval router.
+    prompt = f"""{expert_skill}
+You are a smart document retrieval router.
 You have access to a catalog of {len(catalog)} documents.
 The user is making a request.
 Your job is to find the top {top_k} most relevant templates or reference documents from the catalog.
@@ -88,6 +95,10 @@ Example output:
         routing_model = DEFAULT_INGEST_MODEL
         response_text = call_gemini(prompt, max_tokens=1024, model_override=routing_model, use_cli=use_cli)
         results = parse_json_from_response(response_text)
+
+        if use_cli and isinstance(results, list):
+            log_skill_event("RESULTS", f"Found {len(results)} relevant documents.", use_cli)
+
         if isinstance(results, list):
             return results
         elif isinstance(results, dict) and "file" in results:
@@ -101,11 +112,14 @@ Example output:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python tools/query.py <keyword> [type_filter]")
+        print("Usage: python tools/query.py <keyword> [--cli] [type_filter]")
         sys.exit(1)
         
-    type_filter = sys.argv[2] if len(sys.argv) > 2 else None
-    res = search_index(sys.argv[1], type_filter=type_filter)
+    use_cli = "--cli" in sys.argv
+    query = sys.argv[1] if sys.argv[1] != "--cli" else sys.argv[2]
+    type_filter = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] != "--cli" else (sys.argv[3] if len(sys.argv) > 3 else None)
+    
+    res = search_index(query, type_filter=type_filter, use_cli=use_cli)
     if not res:
         print("No results found.")
     else:

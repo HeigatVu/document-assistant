@@ -134,7 +134,23 @@ def parse_json_from_response(text: str) -> dict:
     """Parse JSON from LLM response, handling markdown fences."""
     text = re.sub(r"^```(?:json)?\s*", "", text.strip())
     text = re.sub(r"\s*```$", "", text.strip())
-    match = re.search(r"\{[\s\S]*\}", text)
+    match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
     if not match:
         raise ValueError("No JSON object found in response")
     return json.loads(match.group())
+
+def log_skill_event(step: str, details: str, use_cli: bool = False):
+    """Log a skill-related event for the dashboard history box."""
+    if use_cli:
+        print(json.dumps({
+            "type": "skill_update",
+            "step": step,
+            "details": details
+        }))
+
+def load_skill(skill_name: str) -> str:
+    """Load the content of a custom skill."""
+    skill_path = REPO_ROOT / ".gemini/skills" / skill_name / "SKILL.md"
+    if skill_path.exists():
+        return f"\nEXPERT SKILL ({skill_name}):\n{skill_path.read_text()}\n"
+    return ""

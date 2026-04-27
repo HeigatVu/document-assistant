@@ -229,52 +229,102 @@ def post_delete_task(req: DeleteTaskRequest):
         
     return {"success": True}
 
-@app.post("/api/task")
-def post_task(req: TaskRequest):
-    output_path = OUTPUT_DIR / f"output_{int(time.time())}.docx"
+from fastapi.responses import StreamingResponse
+import asyncio
 
-    template_file_path = None
-    uploaded_file_path = None
-    if req.template_file:
-        t_requested_path = (RAW_DIR / req.template_file).resolve()
-        if RAW_DIR.resolve() not in t_requested_path.parents:
-            raise HTTPException(status_code=400, detail="Invalid template path")
-        template_file_path = t_requested_path
-        if not template_file_path.exists():
-            raise HTTPException(status_code=400, detail="Template file not found")
+@app.post("/api/task")
+async def post_task_endpoint(req: TaskRequest):
+    if req.use_cli:
+        # For CLI mode, we stream the output of the process_task steps
+        async def stream_task():
+            # Run the task in a separate thread/process to not block the event loop
+            # and capture its stdout for real-time streaming.
+            import subprocess
+            import sys
             
-    if req.uploaded_file:
-        requested_path = (RAW_DIR / req.uploaded_file).resolve()
-        if RAW_DIR.resolve() not in requested_path.parents:
-            raise HTTPException(status_code=400, detail="Invalid file path")
-        uploaded_file_path = requested_path
-        if not uploaded_file_path.exists():
-            raise HTTPException(status_code=400, detail="Uploaded file not found")
-    try:
-        result = process_task(
-            prompt=req.prompt,
-            uploaded_file_path=uploaded_file_path,
-            template_file_path=template_file_path, 
-            reading_model=req.reading_model,
-            writing_model=req.writing_model,
-            save_path=output_path,
-            type_filter=req.type_filter,
-            use_cli=req.use_cli
-        )
-        
-        history_entry = {
-            "id": time.time_ns(),
-            "prompt": req.prompt,
-            "summary": result.summary,
-            "output_file": str(result.output_path.name),
-            "referenced_files": result.referenced_files,
-            "success": result.success,
-            "created_at": time.strftime("%Y-%m-%d %H:%M")
-        }
-        append_history(history_entry)
-        return history_entry 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            # Construct the command to run tools/task.py as a script
+            cmd = [sys.executable, "tools/task.py", req.prompt, "--cli"]
+            if req.template_file:
+                cmd.extend(["--template", req.template_file])
+            if req.type_filter:
+                cmd.extend(["--type", req.type_filter])
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+
+            last_history_entry = None
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                
+                decoded_line = line.decode().strip()
+                # Yield the line for the frontend to process
+                yield f"data: {decoded_line}\n\n"
+                
+                # Check if this is the final result JSON
+                try:
+                    if decoded_line.startswith('{"id":'):
+                        last_history_entry = json.loads(decoded_line)
+                except:
+                    pass
+            
+            await process.wait()
+
+        return StreamingResponse(stream_task(), media_type="text/event-stream")
+    else:
+        # Standard API path (no streaming)
+        output_path = OUTPUT_DIR / f"output_{int(time.time())}.docx"
+
+        template_file_path = None
+        uploaded_file_path = None
+        if req.template_file:
+            t_requested_path = (RAW_DIR / req.template_file).resolve()
+            if RAW_DIR.resolve() not in t_requested_path.parents:
+                raise HTTPException(status_code=400, detail="Invalid template path")
+            template_file_path = t_requested_path
+            if not template_file_path.exists():
+                raise HTTPException(status_code=400, detail="Template file not found")
+                
+        if req.uploaded_file:
+            requested_path = (RAW_DIR / req.uploaded_file).resolve()
+            if RAW_DIR.resolve() not in requested_path.parents:
+                raise HTTPException(status_code=400, detail="Invalid file path")
+            uploaded_file_path = requested_path
+            if not uploaded_file_path.exists():
+                raise HTTPException(status_code=400, detail="Uploaded file not found")
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, 
+                lambda: process_task(
+                    prompt=req.prompt,
+                    uploaded_file_path=uploaded_file_path,
+                    template_file_path=template_file_path, 
+                    reading_model=req.reading_model,
+                    writing_model=req.writing_model,
+                    save_path=output_path,
+                    type_filter=req.type_filter,
+                    use_cli=req.use_cli
+                )
+            )
+            
+            history_entry = {
+                "id": time.time_ns(),
+                "prompt": req.prompt,
+                "summary": result.summary,
+                "output_file": str(result.output_path.name),
+                "referenced_files": result.referenced_files,
+                "success": result.success,
+                "created_at": time.strftime("%Y-%m-%d %H:%M")
+            }
+            append_history(history_entry)
+            return history_entry 
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/ingest")

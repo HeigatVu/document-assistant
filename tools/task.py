@@ -1,9 +1,11 @@
 import os
+import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from tools.utils import call_gemini, parse_json_from_response
+from tools.utils import call_gemini, parse_json_from_response, log_skill_event, load_skill
 from tools.query import search_index
 from tools.docx_writer import clone_and_fill, create_docx
 from tools.config import DEFAULT_READING_MODEL, DEFAULT_WRITING_MODEL
@@ -14,7 +16,6 @@ class TaskResult:
     summary: str
     referenced_files: list[str]
     success: bool
-
 
 def process_task(
     prompt: str,
@@ -28,14 +29,24 @@ def process_task(
 ) -> TaskResult:
     """Process a user task to create or edit a DOCX document."""
     
+    # 0. Load Expert Skill (only in CLI mode)
+    expert_skill = ""
+    if use_cli:
+        expert_skill = load_skill("wikidoc-draft")
+        log_skill_event("SEARCHING", f"Activated 'wikidoc-draft' skill. Searching library for: {prompt}", use_cli)
+
     # 1. Search for references
     search_results = search_index(prompt, top_k=3, type_filter=type_filter, use_cli=use_cli)
     referenced_files = [res.get("file") for res in search_results if "file" in res]
     
+    if use_cli:
+        ref_names = ", ".join(referenced_files) if referenced_files else "None"
+        log_skill_event("PLANNING", f"Found references: {ref_names}. Creating blueprint...", use_cli)
+
     style_guide = ""
     if template_file_path:
         from tools.utils import PROCESSED_DIR
-        template_md_path = PROCESSED_DIR / f"{template_file_path.name}.md"
+        template_md_path = PROCESSED_DIR / "markdown" / f"{template_file_path.stem.lower().replace(' ', '-')}.md"
         if template_md_path.exists():
             style_guide = f"\nSTYLE & STRUCTURE REFERENCE (Follow this style):\n{template_md_path.read_text()}\n"
         else:
@@ -47,48 +58,69 @@ def process_task(
     )
     
     # 2. Plan phase (Reading Model)
-    plan_prompt = f"""You are a document assistant. Create a plan to fulfill the user's request.
+    plan_prompt = f"""You are an expert Document Architect. Your task is to create a detailed structural plan for a professional document.
+{expert_skill}
 {style_guide}
-Context:
+CONTEXT FROM LIBRARY:
 {context_str}
 
-User Request: {prompt}"""
+USER REQUEST: {prompt}
+
+INSTRUCTIONS:
+1. Analyze the request and identify the specific document type and scope.
+2. Define a clear structure (Headings, Sub-headings, Tables, Lists).
+3. If a Style Reference is provided, mirror its tone and structural patterns.
+4. Ensure the plan addresses all requirements in the User Request.
+5. List any specific placeholders or data that need to be generated or replaced."""
     
     plan = call_gemini(plan_prompt, max_tokens=1024, model_override=reading_model, use_cli=use_cli)
     
+    if use_cli:
+        log_skill_event("GENERATING", f"Plan finalized. Starting document generation...", use_cli)
+
     # 3. Write phase (Writing Model)
     from datetime import datetime
     today = datetime.now().strftime("%Y%m%d")
     
-    write_prompt = f"""Based on this plan, generate the document content or template replacements in JSON.
-{style_guide}
-Plan:
+    write_prompt = f"""You are a Document Generator. Based on the ARCHITECTURAL PLAN below, generate the document content in a strict JSON format.
+{expert_skill}
+DOCUMENT PLAN:
 {plan}
 
-User Request: {prompt}
+USER REQUEST: {prompt}
 
-Return ONLY JSON. Your JSON must include a "filename" field adhering to this naming convention:
-YYYYMMDD_[Scope]_[Type]_[Subject]_[vX]
-- Valid Scope: BK, IU, ND2, BV175, VinIF, Terumo, SVI, Common
-- Valid Type: CV, PRO, CON, ETH, BUD, REQ, ADM, REP, SCH, PRE, CRF, FIG, GDL, COR
+NAMING CONVENTION (MANDATORY):
+Filename must follow: YYYYMMDD_[Scope]_[Type]_[Subject]_[vX].docx
+- Valid Scopes: BK, IU, ND2, BV175, VinIF, Terumo, SVI, Common
+- Valid Types: CV, PRO, CON, ETH, BUD, REQ, ADM, REP, SCH, PRE, CRF, FIG, GDL, COR
+- Example: {today}_BV175_CON_ResearchContract_v1.docx
 
-Format for NEW documents: 
+JSON OUTPUT SCHEMAS (MANDATORY):
+
+For NEW Documents:
 {{
-  "filename": "{today}_Scope_Type_Subject_v1.docx",
-  "title": "Title",
+  "filename": "...",
+  "title": "...",
   "sections": [
-    {{"type": "heading", "level": 1, "text": "H1"}},
-    {{"type": "paragraph", "text": "Text..."}},
-    {{"type": "bullet_list", "items": ["I1", "I2"]}},
-    {{"type": "table", "headers": ["C1", "C2"], "rows": [["V1", "V2"]]}}
+    {{"type": "heading", "level": 1, "text": "..."}},
+    {{"type": "paragraph", "text": "...", "format": {{"alignment": "JUSTIFY", "indent_left": 0, "first_line_indent": 360}}}},
+    {{"type": "bullet_list", "items": ["...", "..."]}},
+    {{"type": "table", "headers": ["...", "..."], "rows": [["...", "..."]]}}
   ]
 }}
 
-Format for TEMPLATE edits (if a template is used):
+For TEMPLATE FILLING (Replacements):
 {{
-  "filename": "{today}_Scope_Type_Subject_v1.docx",
-  "replacements": [{{"old": "PLACEHOLDER", "new": "VALUE"}}]
-}}"""
+  "filename": "...",
+  "replacements": [
+    {{"old": "EXACT_TEXT_IN_TEMPLATE", "new": "REPLACEMENT_VALUE"}}
+  ]
+}}
+
+STRICT RULES:
+- Return ONLY the JSON object. No preamble or postscript.
+- For template filling, the "old" value MUST be a literal string found in the reference document.
+- Use professional, formal language (Vietnamese by default unless requested otherwise)."""
     
     content_json = None
     last_error = ""
@@ -128,6 +160,9 @@ Format for TEMPLATE edits (if a template is used):
     else:
         create_docx(content_json, save_path)
         
+    if use_cli:
+        log_skill_event("COMPLETED", f"Document saved successfully: {save_path.name}", use_cli)
+
     return TaskResult(
         output_path=save_path,
         summary="Task completed successfully.",
@@ -137,13 +172,43 @@ Format for TEMPLATE edits (if a template is used):
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) < 2:
-        print("Usage: python tools/task.py <prompt>")
-        sys.exit(1)
+    import argparse
+    from tools.utils import RAW_DIR
     
-    prompt = sys.argv[1]
-    print(f"Starting task: {prompt}")
-    result = process_task(prompt, use_cli=True)
-    print(f"Result: {result.summary}")
-    if result.success:
-        print(f"Output saved to: {result.output_path}")
+    parser = argparse.ArgumentParser(description="Process a document task.")
+    parser.add_argument("prompt", help="The user prompt/description.")
+    parser.add_argument("--cli", action="store_true", help="Use Gemini CLI mode.")
+    parser.add_argument("--template", help="Optional template filename in raw/ directory.")
+    parser.add_argument("--type", help="Optional type filter for searching.")
+    
+    args = parser.parse_args()
+    
+    template_path = None
+    if args.template:
+        template_path = (RAW_DIR / args.template).resolve()
+
+    result = process_task(
+        prompt=args.prompt,
+        template_file_path=template_path,
+        use_cli=args.cli,
+        type_filter=args.type
+    )
+    
+    # In CLI mode, we output a final JSON object that matches history_entry in app.py
+    # so the dashboard can immediately update the history list.
+    if args.cli:
+        history_entry = {
+            "id": int(time.time() * 1000000000), # ns
+            "prompt": args.prompt,
+            "summary": result.summary,
+            "output_file": str(result.output_path.name),
+            "referenced_files": result.referenced_files,
+            "success": result.success,
+            "created_at": time.strftime("%Y-%m-%d %H:%M")
+        }
+        # Print it as a single line for the server to catch
+        print(json.dumps(history_entry))
+    else:
+        print(f"Result: {result.summary}")
+        if result.success:
+            print(f"Output saved to: {result.output_path}")
